@@ -1,7 +1,7 @@
 const request = require("supertest");
 const app     = require("../../src/app");
 
-// ── Shared test data ─────────────────────────────────────────────
+// Shared test data 
 const validUser = {
   username: "testuser",
   email:    "test@example.com",
@@ -16,7 +16,7 @@ const registerUser = async (data = validUser) => {
   return res;
 };
 
-// ── REGISTER ─────────────────────────────────────────────────────
+// REGISTER
 describe("POST /api/auth/register", () => {
 
   it("should register a new user and return 201 + accessToken", async () => {
@@ -70,7 +70,7 @@ describe("POST /api/auth/register", () => {
 
 });
 
-// ── LOGIN ─────────────────────────────────────────────────────────
+// LOGIN
 describe("POST /api/auth/login", () => {
 
   beforeEach(async () => {
@@ -119,7 +119,7 @@ describe("POST /api/auth/login", () => {
 
 });
 
-// ── GET ME ────────────────────────────────────────────────────────
+// GET ME
 describe("GET /api/auth/me", () => {
 
   let accessToken;
@@ -155,7 +155,7 @@ describe("GET /api/auth/me", () => {
 
 });
 
-// ── LOGOUT ────────────────────────────────────────────────────────
+// LOGOUT 
 describe("POST /api/auth/logout", () => {
 
   let accessToken;
