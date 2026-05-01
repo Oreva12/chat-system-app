@@ -1,0 +1,23 @@
+{
+  "name": "chatsystem",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "nodemon index.js",
+    "start": "node index.js",
+    "test": "cross-env NODE_ENV=test jest --runInBand",
+    "test:coverage": "cross-env NODE_ENV=test jest --runInBand --coverage"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "setupFilesAfterEnv": [
+      "<rootDir>/src/tests/setup.js"
+    ],
+    "testMatch": [
+      "<rootDir>/src/tests/**/*.test.js"
+    ],
+    "forceExit": true,
+    "clearMocks": true,
+    "verbose": true,
+    "testTimeout": 30000
+  }
+}
