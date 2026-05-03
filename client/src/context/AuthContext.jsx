@@ -8,7 +8,7 @@ export const AuthProvider = ({ children }) => {
   const [token,   setToken]   = useState(null);
   const [loading, setLoading] = useState(true); // true on first load
 
-  // ── Restore session on page refresh ─────────────────────────
+  // Restore session on page refresh
   useEffect(() => {
     const savedToken = sessionStorage.getItem("accessToken");
     if (savedToken) {
@@ -20,7 +20,7 @@ export const AuthProvider = ({ children }) => {
         .finally(() => setLoading(false));
     } else {
       setLoading(false);
-    }
+    } 
   }, []);
 
   const clearAuth = () => {
@@ -30,7 +30,7 @@ export const AuthProvider = ({ children }) => {
     sessionStorage.removeItem("accessToken");
   };
 
-  // ── Register ─────────────────────────────────────────────────
+  // Register 
   const register = useCallback(async (formData) => {
     const res = await registerUser(formData);
     const { accessToken, user } = res.data;
@@ -41,7 +41,7 @@ export const AuthProvider = ({ children }) => {
     return user;
   }, []);
 
-  // ── Login ────────────────────────────────────────────────────
+  // Login
   const login = useCallback(async (formData) => {
     const res = await loginUser(formData);
     const { accessToken, user } = res.data;
@@ -52,7 +52,7 @@ export const AuthProvider = ({ children }) => {
     return user;
   }, []);
 
-  // ── Logout ───────────────────────────────────────────────────
+  // Logout
   const logout = useCallback(async () => {
     try { await logoutUser(); } catch (_) {}
     clearAuth();

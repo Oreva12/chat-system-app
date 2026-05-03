@@ -6,13 +6,13 @@ const api = axios.create({
   withCredentials: true, // sends httpOnly refresh token cookie automatically
 });
 
-// ── Auth API calls ───────────────────────────────────────────────
+// Auth API calls
 export const registerUser = (data) => api.post("/auth/register", data);
 export const loginUser    = (data) => api.post("/auth/login", data);
 export const logoutUser   = ()     => api.post("/auth/logout");
 export const getMe        = ()     => api.get("/auth/me");
 
-// ── Attach access token to every request automatically ───────────
+// Attach access token to every request automatically
 export const setAuthToken = (token) => {
   if (token) {
     api.defaults.headers.common["Authorization"] = `Bearer ${token}`;
