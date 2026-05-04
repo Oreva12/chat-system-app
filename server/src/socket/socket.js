@@ -1,6 +1,7 @@
-const { Server } = require("socket.io");
-const jwt        = require("jsonwebtoken");
-const User       = require("../models/user.model");
+const { Server }           = require("socket.io");
+const jwt                  = require("jsonwebtoken");
+const User                 = require("../models/user.model");
+const registerRoomHandlers = require("./handlers/room.handler");
 
 const initSocket = (server) => {
   const io = new Server(server, {
@@ -10,58 +11,44 @@ const initSocket = (server) => {
     },
   });
 
-  // ── Auth middleware on every connection ──────────────────────
+  // ── Auth middleware ──────────────────────────────────────────
   io.use(async (socket, next) => {
     try {
-      // Client sends token in handshake auth
       const token = socket.handshake.auth?.token;
+      if (!token) return next(new Error("No token provided"));
 
-      if (!token) {
-        return next(new Error("No token provided"));
-      }
-
-      // Verify JWT
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      const user    = await User.findById(decoded.id);
+      if (!user) return next(new Error("User not found"));
 
-      // Fetch user from DB
-      const user = await User.findById(decoded.id);
-      if (!user) {
-        return next(new Error("User not found"));
-      }
-
-      // Attach user to socket for use in event handlers
       socket.user = user;
       next();
-
     } catch (err) {
-      if (err.name === "TokenExpiredError") {
-        return next(new Error("Token expired"));
-      }
-      return next(new Error("Invalid token"));
+      next(new Error(err.name === "TokenExpiredError" ? "Token expired" : "Invalid token"));
     }
   });
 
-  // ── Connection handler ───────────────────────────────────────
+  // ── Connection ───────────────────────────────────────────────
   io.on("connection", async (socket) => {
-    console.log(`✅ Socket connected: ${socket.user.username} (${socket.id})`);
+    console.log(`✅ Connected: ${socket.user.username} (${socket.id})`);
 
-    // Mark user online in DB
     await User.findByIdAndUpdate(socket.user._id, {
       isOnline: true,
       lastSeen: new Date(),
     });
 
-    // Confirm connection to the client
     socket.emit("connected", {
       message: "Connected to chat server",
       user:    socket.user,
     });
 
-    // ── Disconnect handler ─────────────────────────────────────
-    socket.on("disconnect", async (reason) => {
-      console.log(`❌ Socket disconnected: ${socket.user.username} — ${reason}`);
+    // Register all room event handlers
+    registerRoomHandlers(io, socket);
 
-      // Mark user offline in DB
+    // ── Disconnect ─────────────────────────────────────────────
+    socket.on("disconnect", async (reason) => {
+      console.log(`❌ Disconnected: ${socket.user.username} — ${reason}`);
+
       await User.findByIdAndUpdate(socket.user._id, {
         isOnline: false,
         lastSeen: new Date(),

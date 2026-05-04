@@ -1,54 +1,111 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { io } from "socket.io-client";
 import useAuth from "./useAuth";
 
-const SOCKET_URL = import.meta.env.VITE_API_URL?.replace("/api", "") || "http://localhost:5000";
+const SOCKET_URL = import.meta.env.VITE_API_URL?.replace("/api", "") 
+  || "http://localhost:5000";
 
 const useSocket = () => {
-  const { token }               = useAuth();
-  const socketRef               = useRef(null);
-  const [connected, setConnected] = useState(false);
-  const [error,     setError]     = useState(null);
+  const { token }                 = useAuth();
+  const socketRef                 = useRef(null);
+  const [connected,  setConnected]  = useState(false);
+  const [error,      setError]      = useState(null);
+  const [rooms,      setRooms]      = useState([]);
+  const [activeRoom, setActiveRoom] = useState(null);
 
   useEffect(() => {
-    // Only connect if we have a token
     if (!token) return;
 
-    // Create socket connection with JWT in handshake
     socketRef.current = io(SOCKET_URL, {
-      auth:             { token },
-      withCredentials:  true,
-      transports:       ["websocket"], // skip long-polling
+      auth:            { token },
+      withCredentials: true,
+      transports:      ["websocket"],
     });
 
     const socket = socketRef.current;
 
     socket.on("connected", (data) => {
-      console.log("✅ Socket connected:", data.message);
       setConnected(true);
       setError(null);
+      // Load rooms on connect
+      socket.emit("room:list", {}, ({ success, rooms }) => {
+        if (success) setRooms(rooms);
+      });
+    });
+
+    // New room created by anyone — add to list
+    socket.on("room:new", (room) => {
+      setRooms((prev) => [room, ...prev]);
     });
 
     socket.on("connect_error", (err) => {
-      console.error("Socket connection error:", err.message);
       setError(err.message);
       setConnected(false);
     });
 
-    socket.on("disconnect", (reason) => {
-      console.log("Socket disconnected:", reason);
-      setConnected(false);
-    });
+    socket.on("disconnect", () => setConnected(false));
 
-    // Cleanup on unmount or token change
     return () => {
       socket.disconnect();
       socketRef.current = null;
       setConnected(false);
     };
-  }, [token]); // reconnects if token changes
+  }, [token]);
 
-  return { socket: socketRef.current, connected, error };
+  // ── Room actions ─────────────────────────────────────────────
+  const createRoom = useCallback((name, description = "") => {
+    return new Promise((resolve, reject) => {
+      if (!socketRef.current) return reject("Not connected");
+      socketRef.current.emit("room:create", { name, description }, (res) => {
+        if (res.success) {
+          setActiveRoom(res.room);
+          resolve(res.room);
+        } else {
+          reject(res.message);
+        }
+      });
+    });
+  }, []);
+
+  const joinRoom = useCallback((roomId) => {
+    return new Promise((resolve, reject) => {
+      if (!socketRef.current) return reject("Not connected");
+      socketRef.current.emit("room:join", { roomId }, (res) => {
+        if (res.success) {
+          setActiveRoom(res.room);
+          resolve(res.room);
+        } else {
+          reject(res.message);
+        }
+      });
+    });
+  }, []);
+
+  const leaveRoom = useCallback((roomId) => {
+    return new Promise((resolve, reject) => {
+      if (!socketRef.current) return reject("Not connected");
+      socketRef.current.emit("room:leave", { roomId }, (res) => {
+        if (res.success) {
+          setActiveRoom(null);
+          resolve();
+        } else {
+          reject(res.message);
+        }
+      });
+    });
+  }, []);
+
+  return {
+    socket:     socketRef.current,
+    connected,
+    error,
+    rooms,
+    activeRoom,
+    setActiveRoom,
+    createRoom,
+    joinRoom,
+    leaveRoom,
+  };
 };
 
 export default useSocket;
