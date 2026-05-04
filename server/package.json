@@ -21,6 +21,7 @@
     "testTimeout": 30000
   },
   "dependencies": {
-    "express-rate-limit": "^8.4.1"
+    "express-rate-limit": "^8.4.1",
+    "socket.io": "^4.8.3"
   }
 }
