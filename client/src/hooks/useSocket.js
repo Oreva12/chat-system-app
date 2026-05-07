@@ -8,6 +8,7 @@ const SOCKET_URL = import.meta.env.VITE_API_URL?.replace("/api", "")
 const useSocket = () => {
   const { token }                   = useAuth();
   const socketRef                   = useRef(null);
+  const typingTimeoutRef            = useRef(null);
   const [connected,   setConnected]   = useState(false);
   const [error,       setError]       = useState(null);
   const [rooms,       setRooms]       = useState([]);
@@ -15,6 +16,7 @@ const useSocket = () => {
   const [messages,    setMessages]    = useState([]);
   const [hasMore,     setHasMore]     = useState(false);
   const [loadingMsgs, setLoadingMsgs] = useState(false);
+  const [typingUsers, setTypingUsers] = useState({}); // { roomId: [user, user] }
 
   useEffect(() => {
     if (!token) return;
@@ -35,26 +37,40 @@ const useSocket = () => {
       });
     });
 
-    // New room broadcast
     socket.on("room:new", (room) => {
       setRooms((prev) => [room, ...prev]);
     });
 
-    // Incoming message — add to bottom
     socket.on("message:new", (message) => {
       setMessages((prev) => {
-        // Deduplicate by _id
         const exists = prev.find((m) => m._id === message._id);
         return exists ? prev : [...prev, message];
       });
     });
 
-    // Read receipt update
     socket.on("message:read_update", ({ messageId, readBy }) => {
       setMessages((prev) =>
         prev.map((m) => m._id === messageId ? { ...m, readBy } : m)
       );
     });
+
+    // Typing indicator
+    socket.on("typing:update", ({ roomId, user, isTyping }) => {
+    console.log("🔵 typing:update received", { roomId, user, isTyping }); // ADD
+    setTypingUsers((prev) => {
+      const roomTypers = prev[roomId] || [];
+      if (isTyping) {
+        const exists = roomTypers.find((u) => u._id === user._id.toString());
+        if (exists) return prev;
+        return { ...prev, [roomId]: [...roomTypers, user] };
+      } else {
+        return {
+          ...prev,
+          [roomId]: roomTypers.filter((u) => u._id !== user._id.toString()),
+        };
+      }
+   });
+});
 
     socket.on("connect_error", (err) => {
       setError(err.message);
@@ -88,7 +104,6 @@ const useSocket = () => {
         if (res.success) {
           setActiveRoom(res.room);
           setMessages([]);
-          // Load message history
           socketRef.current.emit("message:history", { roomId }, ({ success, messages, hasMore }) => {
             if (success) { setMessages(messages); setHasMore(hasMore); }
           });
@@ -108,7 +123,7 @@ const useSocket = () => {
     });
   }, []);
 
-  // ── Message actions ──────────────────────────────────────────
+  // Message actions
   const sendMessage = useCallback((roomId, body) => {
     return new Promise((resolve, reject) => {
       if (!socketRef.current) return reject("Not connected");
@@ -123,12 +138,11 @@ const useSocket = () => {
     return new Promise((resolve, reject) => {
       if (!socketRef.current || !hasMore) return resolve([]);
       setLoadingMsgs(true);
-      // Use oldest message's createdAt as cursor
       const cursor = messages[0]?.createdAt;
       socketRef.current.emit("message:history", { roomId, cursor }, ({ success, messages: older, hasMore: more }) => {
         setLoadingMsgs(false);
         if (success) {
-          setMessages((prev) => [...older, ...prev]); // prepend older messages
+          setMessages((prev) => [...older, ...prev]);
           setHasMore(more);
           resolve(older);
         } else reject("Failed to load more");
@@ -138,6 +152,24 @@ const useSocket = () => {
 
   const markRead = useCallback((messageId) => {
     socketRef.current?.emit("message:read", { messageId }, () => {});
+  }, []);
+
+  // Typing actions
+  const startTyping = useCallback((roomId) => {
+    if (!socketRef.current) return;
+    socketRef.current.emit("typing:start", { roomId });
+
+    // Auto-stop after 3 seconds of no new startTyping calls
+    clearTimeout(typingTimeoutRef.current);
+    typingTimeoutRef.current = setTimeout(() => {
+      socketRef.current?.emit("typing:stop", { roomId });
+    }, 3000);
+  }, []);
+
+  const stopTyping = useCallback((roomId) => {
+    if (!socketRef.current) return;
+    clearTimeout(typingTimeoutRef.current);
+    socketRef.current.emit("typing:stop", { roomId });
   }, []);
 
   return {
@@ -150,12 +182,15 @@ const useSocket = () => {
     messages,
     hasMore,
     loadingMsgs,
+    typingUsers,
     createRoom,
     joinRoom,
     leaveRoom,
     sendMessage,
     loadMoreMessages,
     markRead,
+    startTyping,
+    stopTyping,
   };
 };
 
