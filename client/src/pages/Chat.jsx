@@ -2,7 +2,42 @@ import { useState, useEffect, useRef } from "react";
 import useAuth   from "../hooks/useAuth";
 import useSocket from "../hooks/useSocket";
 
-// ── Typing Indicator ─────────────────────────────────────────────
+// ── Tick component ────────────────────────────────────────────────
+const MessageTicks = ({ msg, currentUserId }) => {
+  // Only show ticks on sender's own messages
+  const isOwn = msg.sender?._id === currentUserId || msg.sender === currentUserId;
+  if (!isOwn || msg.isDeleted) return null;
+
+  const roomMembers  = msg.deliveredTo?.length || 0;
+  const readCount    = msg.readBy?.length || 0;
+  const deliveredCount = roomMembers;
+
+  // Blue double tick — at least one OTHER person has read it
+  const seenByOther      = (msg.readBy || [])
+    .some((id) => id.toString() !== currentUserId);
+
+  // Grey double tick — at least one OTHER person received it
+  const deliveredToOther = (msg.deliveredTo || [])
+    .some((id) => id.toString() !== currentUserId);
+
+  // Determine tick state
+  const tickColor = seenByOther ? "#4F8EF7" : "#6B7280";
+  const showDouble = deliveredToOther || seenByOther;
+
+  return (
+    <span style={{ marginLeft: "4px", fontSize: "11px", letterSpacing: "-1px" }}>
+      {showDouble ? (
+        // Double tick
+        <span style={{ color: tickColor }}>✓✓</span>
+      ) : (
+        // Single tick — sent only
+        <span style={{ color: "#6B7280" }}>✓</span>
+      )}
+    </span>
+  );
+};
+
+// ── Typing indicator ──────────────────────────────────────────────
 const TypingIndicator = ({ typers }) => {
   if (!typers || typers.length === 0) return null;
 
@@ -42,6 +77,7 @@ const Chat = () => {
     createRoom, joinRoom, leaveRoom,
     sendMessage, loadMoreMessages,
     markRead, startTyping, stopTyping,
+    editMessage, deleteMessage,
   } = useSocket();
 
   const [newRoomName, setNewRoomName] = useState("");
@@ -50,6 +86,9 @@ const Chat = () => {
   const [msgBody,     setMsgBody]     = useState("");
   const [sending,     setSending]     = useState(false);
   const [showMembers, setShowMembers] = useState(false);
+  const [editingId,   setEditingId]   = useState(null);
+  const [editBody,    setEditBody]    = useState("");
+  const [hoveredId,   setHoveredId]   = useState(null);
   const bottomRef = useRef(null);
 
   // Auto-scroll to latest message
@@ -66,7 +105,7 @@ const Chat = () => {
     }
   }, [messages, activeRoom]);
 
-  // Close members panel when leaving room
+  // Close members panel on room leave
   useEffect(() => {
     if (!activeRoom) setShowMembers(false);
   }, [activeRoom]);
@@ -115,6 +154,35 @@ const Chat = () => {
     else if (activeRoom) stopTyping(activeRoom._id);
   };
 
+  const handleEditStart = (msg) => {
+    setEditingId(msg._id);
+    setEditBody(msg.body);
+  };
+
+  const handleEditSubmit = async (messageId) => {
+    if (!editBody.trim()) return;
+    try {
+      await editMessage(messageId, editBody.trim());
+      setEditingId(null);
+      setEditBody("");
+    } catch (err) {
+      console.error("Edit error:", err);
+    }
+  };
+
+  const handleEditCancel = () => {
+    setEditingId(null);
+    setEditBody("");
+  };
+
+  const handleDelete = async (messageId) => {
+    try {
+      await deleteMessage(messageId);
+    } catch (err) {
+      console.error("Delete error:", err);
+    }
+  };
+
   const formatTime = (date) =>
     new Date(date).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
@@ -132,7 +200,7 @@ const Chat = () => {
       {!connected && (
         <div style={{
           position:     "fixed",
-          top:          0, left: 0, right: 0,
+          top: 0, left: 0, right: 0,
           zIndex:       1000,
           background:   error?.includes("lost") ? "#2D1515" : "#1A1A0A",
           borderBottom: `1px solid ${error?.includes("lost") ? "#E05C8A" : "#F7A24F"}`,
@@ -196,17 +264,11 @@ const Chat = () => {
                 color: "#E8EAF0", fontSize: "12px", outline: "none",
               }}
             />
-            <button
-              type="submit"
-              disabled={creating}
-              style={{
-                background: "#00C896", border: "none", color: "#0D0F14",
-                padding: "7px 12px", borderRadius: "6px",
-                fontSize: "14px", fontWeight: 700, cursor: "pointer",
-              }}
-            >
-              +
-            </button>
+            <button type="submit" disabled={creating} style={{
+              background: "#00C896", border: "none", color: "#0D0F14",
+              padding: "7px 12px", borderRadius: "6px",
+              fontSize: "14px", fontWeight: 700, cursor: "pointer",
+            }}>+</button>
           </form>
           {roomError && (
             <p style={{ color: "#E05C8A", fontSize: "11px", marginTop: "4px" }}>
@@ -279,9 +341,7 @@ const Chat = () => {
                 )}
               </div>
 
-              {/* Header actions */}
               <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-
                 {/* Members toggle */}
                 <button
                   onClick={() => setShowMembers((prev) => !prev)}
@@ -331,7 +391,7 @@ const Chat = () => {
               </div>
             </div>
 
-            {/* Messages + Members row */}
+            {/* Messages + Members */}
             <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
 
               {/* Messages */}
@@ -369,15 +429,25 @@ const Chat = () => {
 
                 {/* Message bubbles */}
                 {messages.map((msg, i) => {
-                  const isOwn     = msg.sender?._id === user?._id || msg.sender === user?._id;
-                  const showName  = i === 0 || messages[i - 1]?.sender?._id !== msg.sender?._id;
+                  const isOwn    = msg.sender?._id === user?._id || msg.sender === user?._id;
+                  const showName = i === 0 || messages[i-1]?.sender?._id !== msg.sender?._id;
+                  const isHovered  = hoveredId === msg._id;
+                  const isEditing  = editingId === msg._id;
 
                   return (
-                    <div key={msg._id} style={{
-                      display: "flex", flexDirection: "column",
-                      alignItems: isOwn ? "flex-end" : "flex-start",
-                      marginTop: showName ? "12px" : "2px",
-                    }}>
+                    <div
+                      key={msg._id}
+                      onMouseEnter={() => setHoveredId(msg._id)}
+                      onMouseLeave={() => setHoveredId(null)}
+                      style={{
+                        display:       "flex",
+                        flexDirection: "column",
+                        alignItems:    isOwn ? "flex-end" : "flex-start",
+                        marginTop:     showName ? "12px" : "2px",
+                        position:      "relative",
+                      }}
+                    >
+                      {/* Sender name */}
                       {showName && !isOwn && (
                         <span style={{
                           color: "#6B7280", fontSize: "11px",
@@ -386,26 +456,136 @@ const Chat = () => {
                           {msg.sender?.username}
                         </span>
                       )}
-                      <div style={{
-                        maxWidth:     "65%",
-                        background:   isOwn ? "#4F8EF7" : "#1E2130",
-                        color:        "#E8EAF0",
-                        padding:      "8px 12px",
-                        borderRadius: isOwn
-                          ? "12px 12px 2px 12px"
-                          : "12px 12px 12px 2px",
-                        fontSize:     "13px",
-                        lineHeight:   1.5,
-                        wordBreak:    "break-word",
-                      }}>
-                        {msg.body}
-                      </div>
-                      <span style={{
-                        color: "#6B7280", fontSize: "10px",
-                        marginTop: "3px", paddingLeft: "4px", paddingRight: "4px",
-                      }}>
-                        {formatTime(msg.createdAt)}
-                      </span>
+
+                      {/* Edit / Delete buttons */}
+                      {isOwn && !msg.isDeleted && isHovered && !isEditing && (
+                        <div style={{ display: "flex", gap: "4px", marginBottom: "4px" }}>
+                          <button
+                            onClick={() => handleEditStart(msg)}
+                            style={{
+                              background: "#1E2130", border: "1px solid #252A3A",
+                              color: "#6B7280", padding: "3px 8px",
+                              borderRadius: "4px", fontSize: "11px", cursor: "pointer",
+                            }}
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => handleDelete(msg._id)}
+                            style={{
+                              background: "#1E2130", border: "1px solid #252A3A",
+                              color: "#E05C8A", padding: "3px 8px",
+                              borderRadius: "4px", fontSize: "11px", cursor: "pointer",
+                            }}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Edit textarea or message bubble */}
+                      {isEditing ? (
+                        <div style={{
+                          width: "65%", display: "flex",
+                          flexDirection: "column", gap: "6px",
+                        }}>
+                          <textarea
+                            value={editBody}
+                            onChange={(e) => setEditBody(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" && !e.shiftKey) {
+                                e.preventDefault();
+                                handleEditSubmit(msg._id);
+                              }
+                              if (e.key === "Escape") handleEditCancel();
+                            }}
+                            autoFocus
+                            rows={2}
+                            style={{
+                              width:        "100%",
+                              background:   "#1E2130",
+                              border:       "1px solid #4F8EF7",
+                              borderRadius: "8px",
+                              padding:      "8px 12px",
+                              color:        "#E8EAF0",
+                              fontSize:     "13px",
+                              outline:      "none",
+                              resize:       "none",
+                              fontFamily:   "inherit",
+                              lineHeight:   1.5,
+                              boxSizing:    "border-box",
+                            }}
+                          />
+                          <div style={{
+                            display: "flex", gap: "6px",
+                            justifyContent: "flex-end",
+                          }}>
+                            <button onClick={handleEditCancel} style={{
+                              background: "none", border: "1px solid #1E2130",
+                              color: "#6B7280", padding: "4px 10px",
+                              borderRadius: "4px", fontSize: "11px", cursor: "pointer",
+                            }}>
+                              Cancel
+                            </button>
+                            <button onClick={() => handleEditSubmit(msg._id)} style={{
+                              background: "#4F8EF7", border: "none",
+                              color: "#fff", padding: "4px 10px",
+                              borderRadius: "4px", fontSize: "11px",
+                              fontWeight: 700, cursor: "pointer",
+                            }}>
+                              Save
+                            </button>
+                          </div>
+                          <p style={{
+                            color: "#6B7280", fontSize: "10px", textAlign: "right",
+                          }}>
+                            Enter to save · Esc to cancel
+                          </p>
+                        </div>
+                      ) : (
+                        <div style={{
+                          maxWidth:     "65%",
+                          background:   msg.isDeleted
+                            ? "transparent"
+                            : isOwn ? "#4F8EF7" : "#1E2130",
+                          color:        msg.isDeleted ? "#4B5268" : "#E8EAF0",
+                          padding:      msg.isDeleted ? "0" : "8px 12px",
+                          borderRadius: isOwn
+                            ? "12px 12px 2px 12px"
+                            : "12px 12px 12px 2px",
+                          fontSize:     "13px",
+                          lineHeight:   1.5,
+                          wordBreak:    "break-word",
+                          fontStyle:    msg.isDeleted ? "italic" : "normal",
+                        }}>
+                          {msg.body}
+                        </div>
+                      )}
+
+                      {/* Timestamp + edited + ticks */}
+                      {!isEditing && (
+                        <div style={{
+                          display:     "flex",
+                          gap:         "4px",
+                          alignItems:  "center",
+                          marginTop:   "3px",
+                          paddingLeft: "4px", paddingRight: "4px",
+                        }}>
+                          <span style={{ color: "#6B7280", fontSize: "10px" }}>
+                            {formatTime(msg.createdAt)}
+                          </span>
+                          {msg.isEdited && !msg.isDeleted && (
+                            <span style={{ color: "#4B5268", fontSize: "10px" }}>
+                              · edited
+                            </span>
+                          )}
+                          {/* WhatsApp-style ticks */}
+                          <MessageTicks
+                            msg={msg}
+                            currentUserId={user?._id}
+                          />
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -414,7 +594,7 @@ const Chat = () => {
                 <div ref={bottomRef} />
               </div>
 
-              {/* ── Members Panel (slide in/out) ──────────────── */}
+              {/* ── Members Panel ─────────────────────────────── */}
               <div style={{
                 width:         showMembers ? "220px" : "0px",
                 overflow:      "hidden",
@@ -429,7 +609,6 @@ const Chat = () => {
                   width: "220px", height: "100%",
                   display: "flex", flexDirection: "column",
                 }}>
-                  {/* Panel header */}
                   <div style={{
                     padding: "14px 16px",
                     borderBottom: "1px solid #1E2130",
@@ -443,7 +622,6 @@ const Chat = () => {
                     </p>
                   </div>
 
-                  {/* Member list */}
                   <div style={{ flex: 1, overflowY: "auto", padding: "8px" }}>
                     {members
                       .slice()
@@ -454,12 +632,12 @@ const Chat = () => {
                           gap: "8px", padding: "7px 10px",
                           borderRadius: "6px", marginBottom: "2px",
                         }}>
-                          {/* Avatar + presence dot */}
                           <div style={{ position: "relative", flexShrink: 0 }}>
                             <div style={{
                               width: "30px", height: "30px", borderRadius: "50%",
                               background: "#1E2130",
-                              display: "flex", alignItems: "center", justifyContent: "center",
+                              display: "flex", alignItems: "center",
+                              justifyContent: "center",
                               color: "#E8EAF0", fontSize: "12px", fontWeight: 700,
                             }}>
                               {member.username?.[0]?.toUpperCase()}
@@ -473,7 +651,6 @@ const Chat = () => {
                             }} />
                           </div>
 
-                          {/* Name + status */}
                           <div style={{ minWidth: 0 }}>
                             <p style={{
                               color: member.isOnline ? "#E8EAF0" : "#6B7280",
@@ -544,14 +721,14 @@ const Chat = () => {
                     fontSize:     "13px",
                     fontWeight:   700,
                     cursor:       "pointer",
-                    opacity: sending || !msgBody.trim() || msgBody.length > 2000 ? 0.5 : 1,
+                    opacity: sending || !msgBody.trim() || msgBody.length > 2000
+                      ? 0.5 : 1,
                   }}
                 >
                   Send
                 </button>
               </form>
 
-              {/* Character counter + hint */}
               <div style={{
                 display: "flex", justifyContent: "space-between",
                 alignItems: "center", marginTop: "6px",
@@ -561,9 +738,8 @@ const Chat = () => {
                 </p>
                 {msgBody.length > 1800 && (
                   <p style={{
-                    color:    msgBody.length > 2000 ? "#E05C8A" : "#F7A24F",
-                    fontSize: "10px",
-                    margin:   0,
+                    color:  msgBody.length > 2000 ? "#E05C8A" : "#F7A24F",
+                    fontSize: "10px", margin: 0,
                   }}>
                     {msgBody.length}/2000
                   </p>

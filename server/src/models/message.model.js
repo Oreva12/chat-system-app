@@ -3,38 +3,39 @@ const mongoose = require("mongoose");
 const messageSchema = new mongoose.Schema(
   {
     roomId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Room",
+      type:     mongoose.Schema.Types.ObjectId,
+      ref:      "Room",
       required: true,
     },
     sender: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
+      type:     mongoose.Schema.Types.ObjectId,
+      ref:      "User",
       required: true,
     },
     body: {
-      type: String,
-      required: [true, "Message body cannot be empty"],
-      maxlength: [2000, "Message cannot exceed 2000 characters"],
-      trim: true,
+      type:      String,
+      required:  true,
+      maxlength: 2000,
+      trim:      true,
     },
     type: {
-      type: String,
-      enum: ["text", "image", "file"],
+      type:    String,
+      enum:    ["text", "image", "file"],
       default: "text",
     },
     readBy: [
-      {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "User",
-      },
+      { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     ],
+    deliveredTo: [
+      { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    ],
+    isDeleted: { type: Boolean, default: false },
+    isEdited:  { type: Boolean, default: false },
+    editedAt:  { type: Date },
   },
   { timestamps: true }
 );
 
-// Compound index — the most critical index in the app
-// Powers fast paginated history queries per room
 messageSchema.index({ roomId: 1, createdAt: -1 });
 
 module.exports = mongoose.model("Message", messageSchema);

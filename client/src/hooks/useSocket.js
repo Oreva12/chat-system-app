@@ -84,6 +84,7 @@ const useSocket = () => {
         });
       }
     });
+    
 
     socket.on("reconnect_attempt", (attempt) => {
       console.log(`🔄 Reconnecting... attempt ${attempt}`);
@@ -133,6 +134,18 @@ const useSocket = () => {
         prev.map((m) => m._id === messageId ? { ...m, readBy } : m)
       );
     });
+
+    socket.on("message:updated", (updatedMessage) => {
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg._id === updatedMessage._id
+            ? { ...msg, ...updatedMessage }
+            : msg
+        )
+      );
+    });
+
+    
 
     // Typing events 
     socket.on("typing:update", ({ roomId, user, isTyping }) => {
@@ -276,6 +289,42 @@ const useSocket = () => {
     socketRef.current?.emit("message:read", { messageId }, () => {});
   }, []);
 
+  const editMessage = useCallback((messageId, body) => {
+      return new Promise((resolve, reject) => {
+        if (!socketRef.current) return reject("Not connected");
+
+        socketRef.current.emit(
+          "message:edit",
+          { messageId, body },
+          (res) => {
+            if (res && res.success) {
+              resolve(res);
+            } else {
+              reject(res?.message || "Failed to edit message");
+            }
+          }
+        );
+      });
+    }, []);
+
+  const deleteMessage = useCallback((messageId) => {
+    return new Promise((resolve, reject) => {
+      if (!socketRef.current) return reject("Not connected");
+
+      socketRef.current.emit(
+        "message:delete",
+        { messageId },
+        (res) => {
+          if (res && res.success) {
+            resolve(res);
+          } else {
+            reject(res?.message || "Failed to delete message");
+          }
+        }
+      );
+    });
+  }, []);
+
   // Typing actions 
   const startTyping = useCallback((roomId) => {
     if (!socketRef.current) return;
@@ -310,9 +359,11 @@ const useSocket = () => {
     sendMessage,
     loadMoreMessages,
     markRead,
+    editMessage,
+    deleteMessage,
     startTyping,
     stopTyping,
-  };
+  }; 
 };
 
 export default useSocket;
