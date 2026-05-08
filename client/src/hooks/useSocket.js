@@ -9,6 +9,7 @@ const useSocket = () => {
   const { token }                   = useAuth();
   const socketRef                   = useRef(null);
   const typingTimeoutRef            = useRef(null);
+  const activeRoomRef               = useRef(null);
   const [connected,   setConnected]   = useState(false);
   const [error,       setError]       = useState(null);
   const [rooms,       setRooms]       = useState([]);
@@ -19,17 +20,28 @@ const useSocket = () => {
   const [typingUsers, setTypingUsers] = useState({});
   const [members,     setMembers]     = useState([]);
 
+  // Keep ref in sync with state for reconnect access
+  const setActiveRoomBoth = useCallback((room) => {
+    activeRoomRef.current = room;
+    setActiveRoom(room);
+  }, []);
+
   useEffect(() => {
     if (!token) return;
 
     socketRef.current = io(SOCKET_URL, {
-      auth:            { token },
-      withCredentials: true,
-      transports:      ["websocket"],
+      auth:                { token },
+      withCredentials:     true,
+      transports:          ["websocket"],
+      reconnection:        true,
+      reconnectionAttempts: 5,
+      reconnectionDelay:   1000,
+      reconnectionDelayMax: 5000,
     });
 
     const socket = socketRef.current;
 
+    // Connection 
     socket.on("connected", () => {
       setConnected(true);
       setError(null);
@@ -38,6 +50,52 @@ const useSocket = () => {
       });
     });
 
+    // Reconnection 
+    socket.on("connect", () => {
+      console.log("✅ Connected / Reconnected");
+      setConnected(true);
+      setError(null);
+
+      // Reload room list
+      socket.emit("room:list", {}, (res) => {
+        if (res && res.success) setRooms(res.rooms || []);
+      });
+
+      // Rejoin active room if there was one
+      const currentRoom = activeRoomRef.current;
+      if (currentRoom) {
+        socket.emit("room:join", { roomId: currentRoom._id }, (res) => {
+          if (res && res.success) {
+            socket.emit("message:history", { roomId: currentRoom._id },
+              (histRes) => {
+                if (histRes && histRes.success) {
+                  setMessages(histRes.messages || []);
+                  setHasMore(histRes.hasMore || false);
+                }
+              });
+
+            socket.emit("room:get_members", { roomId: currentRoom._id },
+              (membRes) => {
+                if (membRes && membRes.success) {
+                  setMembers(membRes.members || []);
+                }
+              });
+          }
+        });
+      }
+    });
+
+    socket.on("reconnect_attempt", (attempt) => {
+      console.log(`🔄 Reconnecting... attempt ${attempt}`);
+      setError(`Reconnecting... (${attempt}/5)`);
+    });
+
+    socket.on("reconnect_failed", () => {
+      console.log("❌ Reconnection failed");
+      setError("Connection lost. Please refresh the page.");
+    });
+
+    // Room events 
     socket.on("room:new", (room) => {
       setRooms((prev) => [room, ...prev]);
     });
@@ -62,6 +120,7 @@ const useSocket = () => {
       );
     });
 
+    // Message events 
     socket.on("message:new", (message) => {
       setMessages((prev) => {
         const exists = prev.find((m) => m._id === message._id);
@@ -75,6 +134,7 @@ const useSocket = () => {
       );
     });
 
+    // Typing events 
     socket.on("typing:update", ({ roomId, user, isTyping }) => {
       setTypingUsers((prev) => {
         const roomTypers = prev[roomId] || [];
@@ -91,6 +151,7 @@ const useSocket = () => {
       });
     });
 
+    // Connection errors 
     socket.on("connect_error", (err) => {
       setError(err.message);
       setConnected(false);
@@ -99,19 +160,20 @@ const useSocket = () => {
     socket.on("disconnect", () => setConnected(false));
 
     return () => {
+      clearTimeout(typingTimeoutRef.current);
       socket.disconnect();
       socketRef.current = null;
       setConnected(false);
     };
   }, [token]);
 
-  // ── Room actions ─────────────────────────────────────────────
+  // Room actions 
   const createRoom = useCallback((name, description = "") => {
     return new Promise((resolve, reject) => {
       if (!socketRef.current) return reject("Not connected");
       socketRef.current.emit("room:create", { name, description }, (res) => {
         if (res && res.success) {
-          setActiveRoom(res.room);
+          setActiveRoomBoth(res.room);
           setMessages([]);
           setMembers([]);
           resolve(res.room);
@@ -120,7 +182,7 @@ const useSocket = () => {
         }
       });
     });
-  }, []);
+  }, [setActiveRoomBoth]);
 
   const joinRoom = useCallback((roomId) => {
     return new Promise((resolve, reject) => {
@@ -130,7 +192,7 @@ const useSocket = () => {
           return reject(res?.message || "Failed to join room");
         }
 
-        setActiveRoom(res.room);
+        setActiveRoomBoth(res.room);
         setMessages([]);
         setMembers([]);
 
@@ -162,14 +224,14 @@ const useSocket = () => {
         resolve(res.room);
       });
     });
-  }, []);
+  }, [setActiveRoomBoth]);
 
   const leaveRoom = useCallback((roomId) => {
     return new Promise((resolve, reject) => {
       if (!socketRef.current) return reject("Not connected");
       socketRef.current.emit("room:leave", { roomId }, (res) => {
         if (res && res.success) {
-          setActiveRoom(null);
+          setActiveRoomBoth(null);
           setMessages([]);
           setMembers([]);
           resolve();
@@ -178,9 +240,9 @@ const useSocket = () => {
         }
       });
     });
-  }, []);
+  }, [setActiveRoomBoth]);
 
-  // ── Message actions ──────────────────────────────────────────
+  // Message actions
   const sendMessage = useCallback((roomId, body) => {
     return new Promise((resolve, reject) => {
       if (!socketRef.current) return reject("Not connected");
@@ -214,7 +276,7 @@ const useSocket = () => {
     socketRef.current?.emit("message:read", { messageId }, () => {});
   }, []);
 
-  // ── Typing actions ───────────────────────────────────────────
+  // Typing actions 
   const startTyping = useCallback((roomId) => {
     if (!socketRef.current) return;
     socketRef.current.emit("typing:start", { roomId });
@@ -231,12 +293,12 @@ const useSocket = () => {
   }, []);
 
   return {
-    socket:         socketRef.current,
+    socket:          socketRef.current,
     connected,
     error,
     rooms,
     activeRoom,
-    setActiveRoom,
+    setActiveRoom:   setActiveRoomBoth,
     messages,
     hasMore,
     loadingMsgs,

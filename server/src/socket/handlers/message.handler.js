@@ -1,6 +1,12 @@
 const Message = require("../../models/message.model");
 const Room    = require("../../models/room.model");
 
+// Simple in-memory rate limiter
+// Tracks last message time per user
+const lastMessageTime = new Map();
+const MESSAGE_COOLDOWN_MS = 500; // min 500ms between messages
+    
+
 const registerMessageHandlers = (io, socket) => {
 
   // message:send
@@ -82,8 +88,8 @@ const registerMessageHandlers = (io, socket) => {
     try {
       const message = await Message.findByIdAndUpdate(
         messageId,
-        { $addToSet: { readBy: socket.user._id } }, // addToSet prevents duplicates
-        { new: true }
+        { $addToSet: { readBy: socket.user._id } },
+        { returnDocument: "after" } // ← replaces { new: true }
       );
 
       if (!message) {
@@ -104,6 +110,53 @@ const registerMessageHandlers = (io, socket) => {
     }
   });
 
-};
+  socket.on("message:send", async ({ roomId, body, type = "text" }, callback) => {
+      try {
+        // Rate limit check 
+        const userId   = socket.user._id.toString();
+        const lastTime = lastMessageTime.get(userId) || 0;
+        const now      = Date.now();
+
+        if (now - lastTime < MESSAGE_COOLDOWN_MS) {
+          return callback({ success: false, message: "Slow down — sending too fast" });
+        }
+        lastMessageTime.set(userId, now);
+
+        // Validate 
+        if (!roomId || !body?.trim()) {
+          return callback({ success: false, message: "roomId and body are required" });
+        }
+
+        if (body.trim().length > 2000) {
+          return callback({ success: false, message: "Message too long (max 2000 chars)" });
+        }
+
+        const room = await Room.findById(roomId);
+        if (!room) {
+          return callback({ success: false, message: "Room not found" });
+        }
+
+        const sanitisedBody = body.trim().replace(/<[^>]*>/g, "");
+
+        const message = await Message.create({
+          roomId,
+          sender: socket.user._id,
+          body:   sanitisedBody,
+          type,
+          readBy: [socket.user._id],
+        });
+
+        const populated = await message.populate("sender", "username avatarUrl");
+        io.to(roomId).emit("message:new", populated);
+
+        console.log(`Message in ${room.name} from ${socket.user.username}: ${sanitisedBody.substring(0, 30)}`);
+        callback({ success: true, message: populated });
+
+      } catch (err) {
+        console.error("message:send error:", err);
+        callback({ success: false, message: "Failed to send message" });
+      }
+    });
+  };
 
 module.exports = registerMessageHandlers;
