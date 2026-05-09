@@ -2,67 +2,70 @@ import { useState, useEffect, useRef } from "react";
 import useAuth   from "../hooks/useAuth";
 import useSocket from "../hooks/useSocket";
 
-// ── Tick component ────────────────────────────────────────────────
+// ── Message Ticks ─────────────────────────────────────────────────
 const MessageTicks = ({ msg, currentUserId }) => {
-  // Only show ticks on sender's own messages
   const isOwn = msg.sender?._id === currentUserId || msg.sender === currentUserId;
   if (!isOwn || msg.isDeleted) return null;
 
-  const roomMembers  = msg.deliveredTo?.length || 0;
-  const readCount    = msg.readBy?.length || 0;
-  const deliveredCount = roomMembers;
-
-  // Blue double tick — at least one OTHER person has read it
   const seenByOther      = (msg.readBy || [])
     .some((id) => id.toString() !== currentUserId);
-
-  // Grey double tick — at least one OTHER person received it
   const deliveredToOther = (msg.deliveredTo || [])
     .some((id) => id.toString() !== currentUserId);
 
-  // Determine tick state
-  const tickColor = seenByOther ? "#4F8EF7" : "#6B7280";
   const showDouble = deliveredToOther || seenByOther;
+  const tickColor  = seenByOther ? "text-blue" : "text-muted";
 
   return (
-    <span style={{ marginLeft: "4px", fontSize: "11px", letterSpacing: "-1px" }}>
-      {showDouble ? (
-        // Double tick
-        <span style={{ color: tickColor }}>✓✓</span>
-      ) : (
-        // Single tick — sent only
-        <span style={{ color: "#6B7280" }}>✓</span>
-      )}
+    <span className={`ml-1 text-xs tracking-tighter ${tickColor}`}>
+      {showDouble ? "✓✓" : "✓"}
     </span>
   );
 };
 
-// ── Typing indicator ──────────────────────────────────────────────
+// ── Typing Indicator ──────────────────────────────────────────────
 const TypingIndicator = ({ typers }) => {
   if (!typers || typers.length === 0) return null;
 
   const text =
     typers.length === 1 ? `${typers[0].username} is typing` :
-    typers.length === 2 ? `${typers[0].username} and ${typers[1].username} are typing` :
+    typers.length === 2
+      ? `${typers[0].username} and ${typers[1].username} are typing` :
     "Several people are typing";
 
   return (
-    <div style={{
-      display: "flex", alignItems: "center",
-      gap: "8px", padding: "4px 0 8px", minHeight: "24px",
-    }}>
-      <div style={{ display: "flex", gap: "3px", alignItems: "center" }}>
+    <div className="flex items-center gap-2 py-1 min-h-6">
+      <div className="flex gap-0.5 items-center">
         {[0, 1, 2].map((i) => (
-          <div key={i} style={{
-            width: "5px", height: "5px", borderRadius: "50%",
-            background: "#6B7280",
-            animation: `bounce 1.2s ease-in-out ${i * 0.2}s infinite`,
-          }} />
+          <div
+            key={i}
+            className="w-1.5 h-1.5 rounded-full bg-muted animate-typing"
+            style={{ animationDelay: `${i * 0.2}s` }}
+          />
         ))}
       </div>
-      <span style={{ color: "#6B7280", fontSize: "11px", fontStyle: "italic" }}>
-        {text}...
-      </span>
+      <span className="text-muted text-xs italic">{text}...</span>
+    </div>
+  );
+};
+
+// ── Avatar ────────────────────────────────────────────────────────
+const Avatar = ({ username, isOnline, size = "sm" }) => {
+  const sizes = {
+    sm: "w-7 h-7 text-xs",
+    md: "w-8 h-8 text-sm",
+  };
+  return (
+    <div className="relative flex-shrink-0">
+      <div className={`${sizes[size]} rounded-full bg-border flex items-center
+                       justify-center text-white font-bold`}>
+        {username?.[0]?.toUpperCase()}
+      </div>
+      {isOnline !== undefined && (
+        <div className={`absolute bottom-0 right-0 w-2 h-2 rounded-full border-2
+                         border-card ${isOnline ? "bg-teal shadow-teal/50 shadow-sm"
+                                                 : "bg-muted/50"}`}
+        />
+      )}
     </div>
   );
 };
@@ -91,12 +94,10 @@ const Chat = () => {
   const [hoveredId,   setHoveredId]   = useState(null);
   const bottomRef = useRef(null);
 
-  // Auto-scroll to latest message
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // Mark last message as read
   useEffect(() => {
     if (!activeRoom || messages.length === 0) return;
     const lastMsg = messages[messages.length - 1];
@@ -105,25 +106,19 @@ const Chat = () => {
     }
   }, [messages, activeRoom]);
 
-  // Close members panel on room leave
   useEffect(() => {
     if (!activeRoom) setShowMembers(false);
   }, [activeRoom]);
 
-  // ── Handlers ──────────────────────────────────────────────────
   const handleCreateRoom = async (e) => {
     e.preventDefault();
     if (!newRoomName.trim()) return;
-    setCreating(true);
-    setRoomError("");
+    setCreating(true); setRoomError("");
     try {
       await createRoom(newRoomName.trim());
       setNewRoomName("");
-    } catch (err) {
-      setRoomError(err);
-    } finally {
-      setCreating(false);
-    }
+    } catch (err) { setRoomError(err); }
+    finally { setCreating(false); }
   };
 
   const handleSendMessage = async (e) => {
@@ -134,17 +129,13 @@ const Chat = () => {
     try {
       await sendMessage(activeRoom._id, msgBody.trim());
       setMsgBody("");
-    } catch (err) {
-      console.error("Send error:", err);
-    } finally {
-      setSending(false);
-    }
+    } catch (err) { console.error("Send error:", err); }
+    finally { setSending(false); }
   };
 
   const handleKeyDown = (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSendMessage(e);
+      e.preventDefault(); handleSendMessage(e);
     }
   };
 
@@ -154,33 +145,20 @@ const Chat = () => {
     else if (activeRoom) stopTyping(activeRoom._id);
   };
 
-  const handleEditStart = (msg) => {
-    setEditingId(msg._id);
-    setEditBody(msg.body);
-  };
+  const handleEditStart  = (msg) => { setEditingId(msg._id); setEditBody(msg.body); };
+  const handleEditCancel = ()    => { setEditingId(null); setEditBody(""); };
 
   const handleEditSubmit = async (messageId) => {
     if (!editBody.trim()) return;
     try {
       await editMessage(messageId, editBody.trim());
-      setEditingId(null);
-      setEditBody("");
-    } catch (err) {
-      console.error("Edit error:", err);
-    }
-  };
-
-  const handleEditCancel = () => {
-    setEditingId(null);
-    setEditBody("");
+      setEditingId(null); setEditBody("");
+    } catch (err) { console.error("Edit error:", err); }
   };
 
   const handleDelete = async (messageId) => {
-    try {
-      await deleteMessage(messageId);
-    } catch (err) {
-      console.error("Delete error:", err);
-    }
+    try { await deleteMessage(messageId); }
+    catch (err) { console.error("Delete error:", err); }
   };
 
   const formatTime = (date) =>
@@ -192,125 +170,101 @@ const Chat = () => {
 
   const onlineCount = members.filter((m) => m.isOnline).length;
 
-  // ── Render ────────────────────────────────────────────────────
   return (
-    <div style={{ display: "flex", height: "100vh", background: "#0D0F14", overflow: "hidden" }}>
+    <div className="flex h-screen bg-dark overflow-hidden">
 
       {/* ── Reconnecting Banner ──────────────────────────────── */}
       {!connected && (
-        <div style={{
-          position:     "fixed",
-          top: 0, left: 0, right: 0,
-          zIndex:       1000,
-          background:   error?.includes("lost") ? "#2D1515" : "#1A1A0A",
-          borderBottom: `1px solid ${error?.includes("lost") ? "#E05C8A" : "#F7A24F"}`,
-          padding:      "8px 20px",
-          display:      "flex",
-          alignItems:   "center",
-          gap:          "10px",
-        }}>
-          <div style={{
-            width: "8px", height: "8px", borderRadius: "50%",
-            background: "#F7A24F",
-            animation: "pulse 1s ease-in-out infinite",
-          }} />
-          <span style={{ color: "#F7A24F", fontSize: "12px", fontWeight: 600 }}>
+        <div className={`fixed top-0 left-0 right-0 z-50 flex items-center gap-3
+                         px-5 py-2 border-b
+                         ${error?.includes("lost")
+                           ? "bg-pink/10 border-pink/30"
+                           : "bg-amber/10 border-amber/30"}`}>
+          <div className="w-2 h-2 rounded-full bg-amber animate-reconnect" />
+          <span className="text-amber text-xs font-semibold">
             {error || "Reconnecting..."}
           </span>
         </div>
       )}
 
       {/* ── Sidebar ──────────────────────────────────────────── */}
-      <div style={{
-        width: "260px", background: "#141720",
-        borderRight: "1px solid #1E2130",
-        display: "flex", flexDirection: "column", flexShrink: 0,
-      }}>
+      <div className="w-64 bg-card border-r border-border flex flex-col
+                      flex-shrink-0">
 
         {/* User info */}
-        <div style={{
-          padding: "14px 16px", borderBottom: "1px solid #1E2130",
-          display: "flex", alignItems: "center", justifyContent: "space-between",
-        }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-            <div style={{
-              width: "8px", height: "8px", borderRadius: "50%",
-              background: connected ? "#00C896" : "#E05C8A",
-              boxShadow:  connected ? "0 0 6px #00C896" : "none",
-            }} />
-            <span style={{ color: "#E8EAF0", fontSize: "13px", fontWeight: 700 }}>
+        <div className="flex items-center justify-between px-4 py-3.5
+                        border-b border-border">
+          <div className="flex items-center gap-2">
+            <div className={`w-2 h-2 rounded-full flex-shrink-0
+                             ${connected
+                               ? "bg-teal shadow-sm shadow-teal/50"
+                               : "bg-pink"}`}
+            />
+            <span className="text-white text-sm font-bold truncate">
               {user?.username}
             </span>
           </div>
-          <button onClick={logout} style={{
-            background: "none", border: "1px solid #1E2130",
-            color: "#6B7280", fontSize: "11px",
-            padding: "3px 8px", borderRadius: "4px", cursor: "pointer",
-          }}>
+          <button
+            onClick={logout}
+            className="text-muted text-xs border border-border rounded px-2 py-1
+                       hover:text-light hover:border-light/30 transition-colors
+                       cursor-pointer"
+          >
             Logout
           </button>
         </div>
 
         {/* Create room */}
-        <div style={{ padding: "12px", borderBottom: "1px solid #1E2130" }}>
-          <form onSubmit={handleCreateRoom} style={{ display: "flex", gap: "6px" }}>
+        <div className="px-3 py-2.5 border-b border-border">
+          <form onSubmit={handleCreateRoom} className="flex gap-1.5">
             <input
               value={newRoomName}
               onChange={(e) => setNewRoomName(e.target.value)}
               placeholder="New room..."
-              style={{
-                flex: 1, background: "#0D0F14", border: "1px solid #1E2130",
-                borderRadius: "6px", padding: "7px 10px",
-                color: "#E8EAF0", fontSize: "12px", outline: "none",
-              }}
+              className="flex-1 bg-dark border border-border rounded-md px-3 py-1.5
+                         text-white text-xs placeholder-muted
+                         focus:border-teal focus:outline-none transition-colors"
             />
-            <button type="submit" disabled={creating} style={{
-              background: "#00C896", border: "none", color: "#0D0F14",
-              padding: "7px 12px", borderRadius: "6px",
-              fontSize: "14px", fontWeight: 700, cursor: "pointer",
-            }}>+</button>
+            <button
+              type="submit"
+              disabled={creating}
+              className="bg-teal hover:bg-teal/90 disabled:opacity-50 text-dark
+                         font-bold px-3 py-1.5 rounded-md text-sm
+                         transition-colors cursor-pointer"
+            >
+              +
+            </button>
           </form>
           {roomError && (
-            <p style={{ color: "#E05C8A", fontSize: "11px", marginTop: "4px" }}>
-              {roomError}
-            </p>
+            <p className="text-pink text-xs mt-1">{roomError}</p>
           )}
         </div>
 
         {/* Room list */}
-        <div style={{ flex: 1, overflowY: "auto", padding: "8px" }}>
-          <p style={{
-            color: "#6B7280", fontSize: "10px", fontWeight: 700,
-            letterSpacing: "0.1em", padding: "4px 8px 6px",
-            textTransform: "uppercase",
-          }}>
+        <div className="flex-1 overflow-y-auto py-2">
+          <p className="text-muted text-[10px] font-bold uppercase tracking-widest
+                        px-4 py-1">
             Rooms ({rooms.length})
           </p>
-
           {rooms.map((room) => {
             const roomTypers = (typingUsers[room._id] || [])
               .filter((u) => u._id !== user?._id);
+            const isActive = activeRoom?._id === room._id;
             return (
               <div
                 key={room._id}
                 onClick={() => joinRoom(room._id)}
-                style={{
-                  padding: "9px 12px", borderRadius: "6px",
-                  cursor: "pointer", marginBottom: "2px",
-                  background: activeRoom?._id === room._id ? "#1E2130" : "transparent",
-                }}
+                className={`mx-2 px-3 py-2 rounded-md cursor-pointer mb-0.5
+                            transition-colors
+                            ${isActive
+                              ? "bg-border"
+                              : "hover:bg-border/50"}`}
               >
-                <p style={{
-                  color: activeRoom?._id === room._id ? "#E8EAF0" : "#C4C9D8",
-                  fontSize: "13px", fontWeight: 600, margin: 0,
-                }}>
+                <p className={`text-sm font-semibold ${isActive ? "text-white" : "text-light"}`}>
                   # {room.name}
                 </p>
                 {roomTypers.length > 0 && (
-                  <p style={{
-                    color: "#00C896", fontSize: "10px",
-                    margin: "2px 0 0", fontStyle: "italic",
-                  }}>
+                  <p className="text-teal text-[10px] italic mt-0.5">
                     {roomTypers[0].username} is typing...
                   </p>
                 )}
@@ -321,58 +275,45 @@ const Chat = () => {
       </div>
 
       {/* ── Main Chat Area ────────────────────────────────────── */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+      <div className="flex-1 flex flex-col min-w-0">
         {activeRoom ? (
           <>
             {/* Room header */}
-            <div style={{
-              padding: "14px 20px", borderBottom: "1px solid #1E2130",
-              display: "flex", alignItems: "center", justifyContent: "space-between",
-              background: "#141720", flexShrink: 0,
-            }}>
+            <div className="flex items-center justify-between px-5 py-3.5
+                            border-b border-border bg-card flex-shrink-0">
               <div>
-                <h2 style={{ color: "#E8EAF0", margin: 0, fontSize: "15px" }}>
+                <h2 className="text-white font-bold text-sm">
                   # {activeRoom.name}
                 </h2>
                 {activeRoom.description && (
-                  <p style={{ color: "#6B7280", margin: "2px 0 0", fontSize: "12px" }}>
+                  <p className="text-muted text-xs mt-0.5">
                     {activeRoom.description}
                   </p>
                 )}
               </div>
 
-              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <div className="flex items-center gap-2">
                 {/* Members toggle */}
                 <button
-                  onClick={() => setShowMembers((prev) => !prev)}
-                  style={{
-                    background:   showMembers ? "#1E2130" : "none",
-                    border:       "1px solid #1E2130",
-                    color:        showMembers ? "#E8EAF0" : "#6B7280",
-                    fontSize:     "12px",
-                    padding:      "5px 12px",
-                    borderRadius: "6px",
-                    cursor:       "pointer",
-                    display:      "flex",
-                    alignItems:   "center",
-                    gap:          "6px",
-                    transition:   "all 0.2s",
-                  }}
+                  onClick={() => setShowMembers((p) => !p)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md
+                               border text-xs font-medium transition-colors
+                               cursor-pointer
+                               ${showMembers
+                                 ? "bg-border border-border text-white"
+                                 : "bg-transparent border-border text-muted hover:text-light"}`}
                 >
-                  <svg width="14" height="14" viewBox="0 0 24 24"
+                  <svg width="13" height="13" viewBox="0 0 24 24"
                     fill="none" stroke="currentColor" strokeWidth="2">
                     <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
                     <circle cx="9" cy="7" r="4"/>
                     <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
                     <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
                   </svg>
-                  {members.length}
+                  <span>{members.length}</span>
                   {onlineCount > 0 && (
-                    <span style={{
-                      background: "#00C896", color: "#0D0F14",
-                      fontSize: "9px", fontWeight: 700,
-                      padding: "1px 5px", borderRadius: "10px",
-                    }}>
+                    <span className="bg-teal text-dark text-[9px] font-bold
+                                     px-1.5 py-0.5 rounded-full">
                       {onlineCount} online
                     </span>
                   )}
@@ -380,11 +321,9 @@ const Chat = () => {
 
                 <button
                   onClick={() => leaveRoom(activeRoom._id)}
-                  style={{
-                    background: "none", border: "1px solid #1E2130",
-                    color: "#6B7280", fontSize: "11px",
-                    padding: "4px 10px", borderRadius: "4px", cursor: "pointer",
-                  }}
+                  className="text-muted text-xs border border-border rounded px-2.5
+                             py-1.5 hover:text-pink hover:border-pink/30
+                             transition-colors cursor-pointer"
                 >
                   Leave
                 </button>
@@ -392,103 +331,80 @@ const Chat = () => {
             </div>
 
             {/* Messages + Members */}
-            <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
+            <div className="flex-1 flex overflow-hidden">
 
               {/* Messages */}
-              <div style={{
-                flex: 1, overflowY: "auto", padding: "20px",
-                display: "flex", flexDirection: "column", gap: "4px",
-              }}>
-                {/* Load more */}
+              <div className="flex-1 overflow-y-auto px-5 py-4 flex
+                              flex-col gap-0.5">
                 {hasMore && (
                   <button
                     onClick={() => loadMoreMessages(activeRoom._id)}
                     disabled={loadingMsgs}
-                    style={{
-                      alignSelf: "center", background: "#141720",
-                      border: "1px solid #1E2130", color: "#6B7280",
-                      padding: "6px 16px", borderRadius: "20px",
-                      fontSize: "12px", cursor: "pointer", marginBottom: "12px",
-                    }}
+                    className="self-center bg-card border border-border text-muted
+                               text-xs px-4 py-1.5 rounded-full mb-3
+                               hover:text-light transition-colors cursor-pointer"
                   >
                     {loadingMsgs ? "Loading..." : "Load earlier messages"}
                   </button>
                 )}
 
-                {/* Empty state */}
                 {messages.length === 0 && (
-                  <div style={{
-                    flex: 1, display: "flex",
-                    alignItems: "center", justifyContent: "center",
-                  }}>
-                    <p style={{ color: "#6B7280", fontSize: "13px" }}>
+                  <div className="flex-1 flex items-center justify-center">
+                    <p className="text-muted text-sm">
                       No messages yet. Say hello! 👋
                     </p>
                   </div>
                 )}
 
-                {/* Message bubbles */}
                 {messages.map((msg, i) => {
-                  const isOwn    = msg.sender?._id === user?._id || msg.sender === user?._id;
-                  const showName = i === 0 || messages[i-1]?.sender?._id !== msg.sender?._id;
-                  const isHovered  = hoveredId === msg._id;
-                  const isEditing  = editingId === msg._id;
+                  const isOwn    = msg.sender?._id === user?._id
+                                || msg.sender === user?._id;
+                  const showName = i === 0
+                                || messages[i-1]?.sender?._id !== msg.sender?._id;
+                  const isHovered = hoveredId === msg._id;
+                  const isEditing = editingId === msg._id;
 
                   return (
                     <div
                       key={msg._id}
                       onMouseEnter={() => setHoveredId(msg._id)}
                       onMouseLeave={() => setHoveredId(null)}
-                      style={{
-                        display:       "flex",
-                        flexDirection: "column",
-                        alignItems:    isOwn ? "flex-end" : "flex-start",
-                        marginTop:     showName ? "12px" : "2px",
-                        position:      "relative",
-                      }}
+                      className={`flex flex-col
+                                  ${isOwn ? "items-end" : "items-start"}
+                                  ${showName ? "mt-3" : "mt-0.5"}`}
                     >
                       {/* Sender name */}
                       {showName && !isOwn && (
-                        <span style={{
-                          color: "#6B7280", fontSize: "11px",
-                          marginBottom: "3px", paddingLeft: "4px",
-                        }}>
+                        <span className="text-muted text-[11px] mb-1 pl-1">
                           {msg.sender?.username}
                         </span>
                       )}
 
-                      {/* Edit / Delete buttons */}
+                      {/* Action buttons */}
                       {isOwn && !msg.isDeleted && isHovered && !isEditing && (
-                        <div style={{ display: "flex", gap: "4px", marginBottom: "4px" }}>
+                        <div className="flex gap-1 mb-1">
                           <button
                             onClick={() => handleEditStart(msg)}
-                            style={{
-                              background: "#1E2130", border: "1px solid #252A3A",
-                              color: "#6B7280", padding: "3px 8px",
-                              borderRadius: "4px", fontSize: "11px", cursor: "pointer",
-                            }}
+                            className="bg-card border border-border text-muted
+                                       hover:text-light text-[11px] px-2 py-0.5
+                                       rounded transition-colors cursor-pointer"
                           >
-                            Edit
+                            ✏️ Edit
                           </button>
                           <button
                             onClick={() => handleDelete(msg._id)}
-                            style={{
-                              background: "#1E2130", border: "1px solid #252A3A",
-                              color: "#E05C8A", padding: "3px 8px",
-                              borderRadius: "4px", fontSize: "11px", cursor: "pointer",
-                            }}
+                            className="bg-card border border-border text-pink
+                                       hover:text-pink/80 text-[11px] px-2 py-0.5
+                                       rounded transition-colors cursor-pointer"
                           >
-                            Delete
+                            🗑️ Delete
                           </button>
                         </div>
                       )}
 
-                      {/* Edit textarea or message bubble */}
+                      {/* Edit input or bubble */}
                       {isEditing ? (
-                        <div style={{
-                          width: "65%", display: "flex",
-                          flexDirection: "column", gap: "6px",
-                        }}>
+                        <div className="w-2/3 flex flex-col gap-1.5">
                           <textarea
                             value={editBody}
                             onChange={(e) => setEditBody(e.target.value)}
@@ -501,89 +417,57 @@ const Chat = () => {
                             }}
                             autoFocus
                             rows={2}
-                            style={{
-                              width:        "100%",
-                              background:   "#1E2130",
-                              border:       "1px solid #4F8EF7",
-                              borderRadius: "8px",
-                              padding:      "8px 12px",
-                              color:        "#E8EAF0",
-                              fontSize:     "13px",
-                              outline:      "none",
-                              resize:       "none",
-                              fontFamily:   "inherit",
-                              lineHeight:   1.5,
-                              boxSizing:    "border-box",
-                            }}
+                            className="w-full bg-input border border-blue rounded-lg
+                                       px-3 py-2 text-white text-sm outline-none
+                                       resize-none font-sans leading-relaxed"
                           />
-                          <div style={{
-                            display: "flex", gap: "6px",
-                            justifyContent: "flex-end",
-                          }}>
-                            <button onClick={handleEditCancel} style={{
-                              background: "none", border: "1px solid #1E2130",
-                              color: "#6B7280", padding: "4px 10px",
-                              borderRadius: "4px", fontSize: "11px", cursor: "pointer",
-                            }}>
+                          <div className="flex gap-1.5 justify-end">
+                            <button
+                              onClick={handleEditCancel}
+                              className="text-muted text-xs border border-border
+                                         px-2.5 py-1 rounded cursor-pointer
+                                         hover:text-light transition-colors"
+                            >
                               Cancel
                             </button>
-                            <button onClick={() => handleEditSubmit(msg._id)} style={{
-                              background: "#4F8EF7", border: "none",
-                              color: "#fff", padding: "4px 10px",
-                              borderRadius: "4px", fontSize: "11px",
-                              fontWeight: 700, cursor: "pointer",
-                            }}>
+                            <button
+                              onClick={() => handleEditSubmit(msg._id)}
+                              className="bg-blue text-white text-xs font-bold
+                                         px-2.5 py-1 rounded cursor-pointer
+                                         hover:bg-blue/90 transition-colors"
+                            >
                               Save
                             </button>
                           </div>
-                          <p style={{
-                            color: "#6B7280", fontSize: "10px", textAlign: "right",
-                          }}>
+                          <p className="text-muted text-[10px] text-right">
                             Enter to save · Esc to cancel
                           </p>
                         </div>
                       ) : (
-                        <div style={{
-                          maxWidth:     "65%",
-                          background:   msg.isDeleted
-                            ? "transparent"
-                            : isOwn ? "#4F8EF7" : "#1E2130",
-                          color:        msg.isDeleted ? "#4B5268" : "#E8EAF0",
-                          padding:      msg.isDeleted ? "0" : "8px 12px",
-                          borderRadius: isOwn
-                            ? "12px 12px 2px 12px"
-                            : "12px 12px 12px 2px",
-                          fontSize:     "13px",
-                          lineHeight:   1.5,
-                          wordBreak:    "break-word",
-                          fontStyle:    msg.isDeleted ? "italic" : "normal",
-                        }}>
+                        <div className={`max-w-[65%] px-3 py-2 text-sm
+                                         leading-relaxed break-words
+                                         ${msg.isDeleted
+                                           ? "text-muted/60 italic"
+                                           : isOwn
+                                             ? "bg-blue text-white rounded-xl rounded-br-sm"
+                                             : "bg-border text-white rounded-xl rounded-bl-sm"}`}
+                        >
                           {msg.body}
                         </div>
                       )}
 
                       {/* Timestamp + edited + ticks */}
                       {!isEditing && (
-                        <div style={{
-                          display:     "flex",
-                          gap:         "4px",
-                          alignItems:  "center",
-                          marginTop:   "3px",
-                          paddingLeft: "4px", paddingRight: "4px",
-                        }}>
-                          <span style={{ color: "#6B7280", fontSize: "10px" }}>
+                        <div className="flex items-center gap-1 mt-0.5 px-1">
+                          <span className="text-muted text-[10px]">
                             {formatTime(msg.createdAt)}
                           </span>
                           {msg.isEdited && !msg.isDeleted && (
-                            <span style={{ color: "#4B5268", fontSize: "10px" }}>
+                            <span className="text-muted/50 text-[10px]">
                               · edited
                             </span>
                           )}
-                          {/* WhatsApp-style ticks */}
-                          <MessageTicks
-                            msg={msg}
-                            currentUserId={user?._id}
-                          />
+                          <MessageTicks msg={msg} currentUserId={user?._id} />
                         </div>
                       )}
                     </div>
@@ -595,88 +479,55 @@ const Chat = () => {
               </div>
 
               {/* ── Members Panel ─────────────────────────────── */}
-              <div style={{
-                width:         showMembers ? "220px" : "0px",
-                overflow:      "hidden",
-                transition:    "width 0.25s ease",
-                background:    "#141720",
-                borderLeft:    showMembers ? "1px solid #1E2130" : "none",
-                flexShrink:    0,
-                display:       "flex",
-                flexDirection: "column",
-              }}>
-                <div style={{
-                  width: "220px", height: "100%",
-                  display: "flex", flexDirection: "column",
-                }}>
-                  <div style={{
-                    padding: "14px 16px",
-                    borderBottom: "1px solid #1E2130",
-                    flexShrink: 0,
-                  }}>
-                    <p style={{
-                      color: "#6B7280", fontSize: "10px", fontWeight: 700,
-                      letterSpacing: "0.1em", textTransform: "uppercase", margin: 0,
-                    }}>
+              <div
+                className={`bg-card border-l border-border flex-shrink-0
+                             flex flex-col transition-all duration-300 overflow-hidden
+                             ${showMembers ? "w-52" : "w-0 border-l-0"}`}
+              >
+                <div className="w-52 h-full flex flex-col">
+                  <div className="px-4 py-3.5 border-b border-border flex-shrink-0">
+                    <p className="text-muted text-[10px] font-bold uppercase
+                                  tracking-widest">
                       Members — {onlineCount} online
                     </p>
                   </div>
 
-                  <div style={{ flex: 1, overflowY: "auto", padding: "8px" }}>
+                  <div className="flex-1 overflow-y-auto py-2">
                     {members
                       .slice()
                       .sort((a, b) => (b.isOnline ? 1 : 0) - (a.isOnline ? 1 : 0))
                       .map((member) => (
-                        <div key={member._id} style={{
-                          display: "flex", alignItems: "center",
-                          gap: "8px", padding: "7px 10px",
-                          borderRadius: "6px", marginBottom: "2px",
-                        }}>
-                          <div style={{ position: "relative", flexShrink: 0 }}>
-                            <div style={{
-                              width: "30px", height: "30px", borderRadius: "50%",
-                              background: "#1E2130",
-                              display: "flex", alignItems: "center",
-                              justifyContent: "center",
-                              color: "#E8EAF0", fontSize: "12px", fontWeight: 700,
-                            }}>
-                              {member.username?.[0]?.toUpperCase()}
-                            </div>
-                            <div style={{
-                              position: "absolute", bottom: 0, right: 0,
-                              width: "9px", height: "9px", borderRadius: "50%",
-                              background: member.isOnline ? "#00C896" : "#4B5268",
-                              border: "2px solid #141720",
-                              boxShadow: member.isOnline ? "0 0 6px #00C896" : "none",
-                            }} />
-                          </div>
-
-                          <div style={{ minWidth: 0 }}>
-                            <p style={{
-                              color: member.isOnline ? "#E8EAF0" : "#6B7280",
-                              fontSize: "12px", fontWeight: 600, margin: 0,
-                              whiteSpace: "nowrap", overflow: "hidden",
-                              textOverflow: "ellipsis",
-                            }}>
+                        <div key={member._id}
+                          className="flex items-center gap-2.5 px-3 py-2
+                                     rounded-md mx-1 mb-0.5 hover:bg-border/30
+                                     transition-colors">
+                          <Avatar
+                            username={member.username}
+                            isOnline={member.isOnline}
+                          />
+                          <div className="min-w-0">
+                            <p className={`text-xs font-semibold truncate
+                                           ${member.isOnline
+                                             ? "text-white"
+                                             : "text-muted"}`}>
                               {member.username}
                               {member._id === user?._id && (
-                                <span style={{ color: "#4B5268", fontWeight: 400 }}>
+                                <span className="text-muted/50 font-normal">
                                   {" "}(you)
                                 </span>
                               )}
                             </p>
-                            <p style={{
-                              color: member.isOnline ? "#00C896" : "#4B5268",
-                              fontSize: "10px", margin: 0,
-                            }}>
+                            <p className={`text-[10px]
+                                           ${member.isOnline
+                                             ? "text-teal"
+                                             : "text-muted/50"}`}>
                               {member.isOnline ? "Online" : "Offline"}
                             </p>
                           </div>
                         </div>
                       ))}
-
                     {members.length === 0 && (
-                      <p style={{ color: "#4B5268", fontSize: "12px", padding: "8px" }}>
+                      <p className="text-muted/50 text-xs px-4 py-2">
                         No members yet
                       </p>
                     )}
@@ -686,14 +537,11 @@ const Chat = () => {
             </div>
 
             {/* ── Message Input ─────────────────────────────────── */}
-            <div style={{
-              padding: "16px 20px",
-              borderTop: "1px solid #1E2130",
-              flexShrink: 0,
-            }}>
-              <form onSubmit={handleSendMessage} style={{
-                display: "flex", gap: "10px", alignItems: "flex-end",
-              }}>
+            <div className="px-5 py-4 border-t border-border flex-shrink-0">
+              <form
+                onSubmit={handleSendMessage}
+                className="flex gap-2.5 items-end"
+              >
                 <textarea
                   value={msgBody}
                   onChange={handleMsgInput}
@@ -701,46 +549,30 @@ const Chat = () => {
                   onBlur={() => activeRoom && stopTyping(activeRoom._id)}
                   placeholder={`Message # ${activeRoom.name}`}
                   rows={1}
-                  style={{
-                    flex: 1, background: "#1E2130",
-                    border: "1px solid #252A3A",
-                    borderRadius: "8px", padding: "10px 14px",
-                    color: "#E8EAF0", fontSize: "13px", outline: "none",
-                    resize: "none", lineHeight: 1.5, fontFamily: "inherit",
-                  }}
+                  className="flex-1 bg-input border border-border/80 rounded-xl
+                             px-4 py-2.5 text-white text-sm placeholder-muted
+                             focus:border-blue focus:outline-none
+                             resize-none leading-relaxed font-sans"
                 />
                 <button
                   type="submit"
                   disabled={sending || !msgBody.trim() || msgBody.length > 2000}
-                  style={{
-                    background:   "#4F8EF7",
-                    border:       "none",
-                    color:        "#fff",
-                    padding:      "10px 18px",
-                    borderRadius: "8px",
-                    fontSize:     "13px",
-                    fontWeight:   700,
-                    cursor:       "pointer",
-                    opacity: sending || !msgBody.trim() || msgBody.length > 2000
-                      ? 0.5 : 1,
-                  }}
+                  className="bg-blue hover:bg-blue/90 disabled:opacity-50
+                             text-white font-bold px-5 py-2.5 rounded-xl
+                             text-sm transition-colors cursor-pointer
+                             flex-shrink-0"
                 >
                   Send
                 </button>
               </form>
 
-              <div style={{
-                display: "flex", justifyContent: "space-between",
-                alignItems: "center", marginTop: "6px",
-              }}>
-                <p style={{ color: "#6B7280", fontSize: "10px", margin: 0 }}>
+              <div className="flex justify-between items-center mt-1.5">
+                <p className="text-muted text-[10px]">
                   Enter to send · Shift+Enter for new line
                 </p>
                 {msgBody.length > 1800 && (
-                  <p style={{
-                    color:  msgBody.length > 2000 ? "#E05C8A" : "#F7A24F",
-                    fontSize: "10px", margin: 0,
-                  }}>
+                  <p className={`text-[10px] ${msgBody.length > 2000
+                    ? "text-pink" : "text-amber"}`}>
                     {msgBody.length}/2000
                   </p>
                 )}
@@ -748,31 +580,23 @@ const Chat = () => {
             </div>
           </>
         ) : (
-          <div style={{
-            flex: 1, display: "flex", flexDirection: "column",
-            alignItems: "center", justifyContent: "center", gap: "8px",
-          }}>
-            <p style={{ color: "#6B7280", fontSize: "14px" }}>
+          <div className="flex-1 flex flex-col items-center justify-center gap-2">
+            <div className="w-16 h-16 rounded-2xl bg-card border border-border
+                            flex items-center justify-center mb-2">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none"
+                stroke="#6B7280" strokeWidth="1.5">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+              </svg>
+            </div>
+            <p className="text-light text-sm font-medium">
               Select a room to start chatting
             </p>
-            <p style={{ color: "#4B5268", fontSize: "12px" }}>
+            <p className="text-muted text-xs">
               or create a new one from the sidebar
             </p>
           </div>
         )}
       </div>
-
-      {/* ── Global Animations ─────────────────────────────────── */}
-      <style>{`
-        @keyframes bounce {
-          0%, 60%, 100% { transform: translateY(0); }
-          30%            { transform: translateY(-4px); }
-        }
-        @keyframes pulse {
-          0%, 100% { opacity: 1; }
-          50%       { opacity: 0.3; }
-        }
-      `}</style>
     </div>
   );
 };

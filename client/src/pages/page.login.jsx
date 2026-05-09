@@ -3,12 +3,11 @@ import { Link, useNavigate } from "react-router-dom";
 import useAuth from "../hooks/useAuth";
 
 const Login = () => {
-  const { login } = useAuth();
-  const navigate  = useNavigate();
-
-  const [form,    setForm]    = useState({ email: "", password: "" });
-  const [error,   setError]   = useState("");
-  const [loading, setLoading] = useState(false);
+  const { login }    = useAuth();
+  const navigate     = useNavigate();
+  const [form,       setForm]    = useState({ email: "", password: "" });
+  const [error,      setError]   = useState("");
+  const [loading,    setLoading] = useState(false);
 
   const handleChange = (e) => {
     setForm({ ...form, [e.target.name]: e.target.value });
@@ -29,55 +28,92 @@ const Login = () => {
   };
 
   return (
-    <div style={styles.container}>
-      <div style={styles.card}>
-        <h1 style={styles.title}>Welcome back</h1>
-        <p style={styles.subtitle}>Sign in to your account</p>
+    <div className="min-h-screen bg-dark flex items-center justify-center px-4">
+      <div className="w-full max-w-sm">
 
-        {error && <div style={styles.error}>{error}</div>}
+        {/* Logo / Brand */}
+        <div className="text-center mb-8">
+          <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-blue mb-4">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none"
+              stroke="white" strokeWidth="2">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+            </svg>
+          </div>
+          <h1 className="text-2xl font-bold text-white">Welcome back</h1>
+          <p className="text-muted text-sm mt-1">Sign in to your account</p>
+        </div>
 
-        <form onSubmit={handleSubmit} style={styles.form}>
-          <input
-            style={styles.input}
-            type="email"
-            name="email"
-            placeholder="Email address"
-            value={form.email}
-            onChange={handleChange}
-            required
-          />
-          <input
-            style={styles.input}
-            type="password"
-            name="password"
-            placeholder="Password"
-            value={form.password}
-            onChange={handleChange}
-            required
-          />
-          <button style={styles.button} type="submit" disabled={loading}>
-            {loading ? "Signing in..." : "Sign in"}
-          </button>
-        </form>
+        {/* Card */}
+        <div className="bg-card border border-border rounded-xl p-6">
 
-        <p style={styles.link}>
-          Don't have an account? <Link to="/register">Create one</Link>
+          {/* Error */}
+          {error && (
+            <div className="bg-pink/10 border border-pink/30 text-pink
+                            rounded-lg px-4 py-3 text-sm mb-4">
+              {error}
+            </div>
+          )}
+
+          <form onSubmit={handleSubmit} className="flex flex-col gap-3">
+            <div className="flex flex-col gap-1.5">
+              <label className="text-light text-xs font-semibold uppercase
+                                tracking-wider">
+                Email
+              </label>
+              <input
+                type="email"
+                name="email"
+                value={form.email}
+                onChange={handleChange}
+                placeholder="you@example.com"
+                required
+                className="bg-dark border border-border rounded-lg px-4 py-3
+                           text-white text-sm placeholder-muted
+                           focus:border-blue focus:outline-none
+                           transition-colors"
+              />
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <label className="text-light text-xs font-semibold uppercase
+                                tracking-wider">
+                Password
+              </label>
+              <input
+                type="password"
+                name="password"
+                value={form.password}
+                onChange={handleChange}
+                placeholder="••••••••"
+                required
+                className="bg-dark border border-border rounded-lg px-4 py-3
+                           text-white text-sm placeholder-muted
+                           focus:border-blue focus:outline-none
+                           transition-colors"
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="bg-blue hover:bg-blue/90 disabled:opacity-50
+                         text-white font-bold py-3 rounded-lg text-sm
+                         transition-colors mt-2 cursor-pointer"
+            >
+              {loading ? "Signing in..." : "Sign in"}
+            </button>
+          </form>
+        </div>
+
+        <p className="text-center text-muted text-sm mt-4">
+          Don't have an account?{" "}
+          <Link to="/register" className="text-blue hover:underline font-medium">
+            Create one
+          </Link>
         </p>
       </div>
     </div>
   );
-};
-
-const styles = {
-  container: { minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#0D0F14" },
-  card:      { background: "#141720", padding: "40px", borderRadius: "12px", width: "100%", maxWidth: "400px", border: "1px solid #1E2130" },
-  title:     { color: "#E8EAF0", fontSize: "24px", fontWeight: 700, margin: "0 0 4px" },
-  subtitle:  { color: "#6B7280", fontSize: "14px", margin: "0 0 24px" },
-  error:     { background: "#2D1515", border: "1px solid #E05C8A", color: "#E05C8A", padding: "10px 14px", borderRadius: "6px", fontSize: "13px", marginBottom: "16px" },
-  form:      { display: "flex", flexDirection: "column", gap: "12px" },
-  input:     { background: "#0D0F14", border: "1px solid #1E2130", borderRadius: "6px", padding: "12px 14px", color: "#E8EAF0", fontSize: "14px", outline: "none" },
-  button:    { background: "#4F8EF7", color: "#fff", border: "none", borderRadius: "6px", padding: "12px", fontSize: "14px", fontWeight: 700, cursor: "pointer", marginTop: "4px" },
-  link:      { color: "#6B7280", fontSize: "13px", textAlign: "center", marginTop: "20px" },
 };
 
 export default Login;
