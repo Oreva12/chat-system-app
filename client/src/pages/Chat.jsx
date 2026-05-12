@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useCallback, useMemo, memo } from "react";
 import useAuth from "../hooks/useAuth";
 import useSocket from "../hooks/useSocket";
+import EmojiPickerComponent from "../components/EmojiPicker";
+import ImageUpload from "../components/ImageUpload";
 
 // ── Constants ─────────────────────────────────────────────────────
 const MESSAGE_MAX_LENGTH = 2000;
@@ -20,6 +22,53 @@ const getSenderId = (sender) =>
 
 const isOwnMessage = (msg, currentUserId) => 
   getSenderId(msg.sender) === currentUserId;
+
+// ── Fullscreen Image Modal ────────────────────────────────────────
+const ImageModal = ({ src, onClose }) => {
+  // Close on Escape key
+  useEffect(() => {
+    const handleKey = (e) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, [onClose]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-dark/95 flex items-center
+                 justify-center p-4 animate-fade-in"
+      onClick={onClose}
+    >
+      {/* Close button */}
+      <button
+        onClick={onClose}
+        className="absolute top-4 right-4 w-9 h-9 rounded-full bg-border
+                   flex items-center justify-center text-light
+                   hover:bg-light/20 transition-colors cursor-pointer z-10"
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+          stroke="currentColor" strokeWidth="2.5">
+          <line x1="18" y1="6" x2="6" y2="18"/>
+          <line x1="6" y1="6" x2="18" y2="18"/>
+        </svg>
+      </button>
+
+      {/* Image */}
+      <img
+        src={src}
+        alt="Full size"
+        className="max-w-full max-h-full object-contain rounded-lg
+                   shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      />
+
+      {/* Tap anywhere to close hint */}
+      <p className="absolute bottom-6 left-0 right-0 text-center
+                    text-muted text-xs">
+        Tap anywhere to close
+      </p>
+    </div>
+  );
+};
 
 // ── Hamburger Icon Component ──────────────────────────────────────
 const HamburgerIcon = ({ open }) => (
@@ -289,7 +338,7 @@ const useAutoScroll = (messages, hasMore) => {
   return bottomRef;
 };
 
-// ── Message Component (Simplified - No Hover Buttons) ─────────────
+// ── Message Component ─────────────────────────────────────────────
 const MessageBubble = memo(({ 
   message, 
   isOwn, 
@@ -302,7 +351,8 @@ const MessageBubble = memo(({
   currentUserId,
   editBody,
   setEditBody,
-  onContextMenu
+  onContextMenu,
+  onImageClick
 }) => {
   const longPressProps = useLongPress(
     (e) => {
@@ -370,19 +420,40 @@ const MessageBubble = memo(({
         </span>
       )}
 
-      <div className={`
-        max-w-[80%] sm:max-w-[70%] md:max-w-[65%]
-        px-3 py-2 text-sm leading-relaxed break-words
-        transition-all duration-200
-        ${message.isDeleted
-          ? "text-muted/60 italic"
-          : isOwn
-            ? "bg-blue text-white rounded-xl rounded-br-sm"
-            : "bg-border text-white rounded-xl rounded-bl-sm"
-        }
-      `}>
-        {message.body}
-      </div>
+      {message.type === "image" ? (
+        <div
+          className="overflow-hidden rounded-xl rounded-br-sm cursor-pointer group relative max-w-[80%] sm:max-w-[70%] md:max-w-[65%]"
+          onClick={() => onImageClick(message.body)}
+        >
+          <img
+            src={message.body}
+            alt="Shared image"
+            className="max-w-[280px] w-full object-cover
+                       group-hover:opacity-90 transition-opacity rounded-xl"
+            style={{ maxHeight: "320px", minWidth: "160px" }}
+          />
+          <div className="absolute inset-0 flex items-center justify-center
+                          opacity-0 group-hover:opacity-100 transition-opacity
+                          bg-dark/40 rounded-xl">
+            <span className="text-white text-xs font-medium bg-dark/60
+                             px-3 py-1 rounded-full">
+              Click to view
+            </span>
+          </div>
+        </div>
+      ) : (
+        <div className={`
+          max-w-[80%] sm:max-w-[70%] md:max-w-[65%]
+          ${message.isDeleted
+            ? "text-muted/60 italic text-sm px-3 py-2"
+            : isOwn
+              ? "bg-blue text-white rounded-xl rounded-br-sm px-3 py-2 text-sm leading-relaxed break-words"
+              : "bg-border text-white rounded-xl rounded-bl-sm px-3 py-2 text-sm leading-relaxed break-words"
+          }
+        `}>
+          {message.isDeleted ? "This message was deleted" : message.body}
+        </div>
+      )}
 
       <div className="flex items-center gap-1 mt-0.5 px-1">
         <span className="text-muted text-[10px]">
@@ -429,16 +500,21 @@ const Chat = () => {
   const [newRoomName, setNewRoomName] = useState("");
   const [roomError, setRoomError] = useState("");
   const [isCreatingRoom, setIsCreatingRoom] = useState(false);
-  const [messageBody, setMessageBody] = useState("");
-  const [isSending, setIsSending] = useState(false);
+  const [msgBody, setMsgBody] = useState("");
+  const [sending, setSending] = useState(false);
   const [showMembers, setShowMembers] = useState(false);
   const [showSidebar, setShowSidebar] = useState(false);
   const [editingMessage, setEditingMessage] = useState(null);
   const [contextMenu, setContextMenu] = useState(null);
+  const [showEmoji, setShowEmoji] = useState(false);
+  const [imagePreview, setImagePreview] = useState(null);
+  const [emojiPickerPosition, setEmojiPickerPosition] = useState({ top: 0, left: 0 });
+  const [fullscreenImage, setFullscreenImage] = useState(null);
   
   const inputRef = useRef(null);
   const typingTimeoutRef = useRef(null);
   const bottomRef = useAutoScroll(messages, hasMore);
+  const emojiButtonRef = useRef(null);
 
   const activeTypers = useMemo(() => 
     activeRoom ? (typingUsers[activeRoom._id] || []).filter(u => u._id !== user?._id) : [],
@@ -461,9 +537,9 @@ const Chat = () => {
     }
   }, [startTyping, stopTyping]);
 
-  const handleMessageInput = useCallback((e) => {
+  const handleMsgInput = useCallback((e) => {
     const value = e.target.value;
-    setMessageBody(value);
+    setMsgBody(value);
     
     if (activeRoom && value.trim()) {
       handleTyping(activeRoom._id, true);
@@ -472,26 +548,58 @@ const Chat = () => {
     }
   }, [activeRoom, handleTyping]);
 
+  const handleImageUpload = useCallback(({ base64, name }) => {
+    setImagePreview({ base64, name });
+  }, []);
+
+  const handleCancelImage = useCallback(() => {
+    setImagePreview(null);
+  }, []);
+
   const handleSendMessage = useCallback(async (e) => {
     e.preventDefault();
-    if (!messageBody.trim() || !activeRoom || isSending) return;
+
+    // Send image
+    if (imagePreview) {
+      setSending(true);
+      try {
+        await sendMessage(activeRoom._id, "", "image", imagePreview.base64);
+        setImagePreview(null);
+        inputRef.current?.focus();
+      } catch (err) {
+        console.error("Image send error:", err);
+      } finally {
+        setSending(false);
+      }
+      return;
+    }
+
+    // Send text
+    if (!msgBody.trim() || !activeRoom || sending) return;
     
-    const trimmedBody = messageBody.trim();
+    const trimmedBody = msgBody.trim();
     if (trimmedBody.length > MESSAGE_MAX_LENGTH) return;
 
-    setIsSending(true);
+    setSending(true);
     handleTyping(activeRoom._id, false);
     
     try {
       await sendMessage(activeRoom._id, trimmedBody);
-      setMessageBody("");
+      setMsgBody("");
       inputRef.current?.focus();
     } catch (err) {
       console.error("Send error:", err);
     } finally {
-      setIsSending(false);
+      setSending(false);
     }
-  }, [messageBody, activeRoom, isSending, sendMessage, handleTyping]);
+  }, [msgBody, activeRoom, sending, sendMessage, handleTyping, imagePreview]);
+
+  const handleKeyDown = useCallback((e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSendMessage(e);
+    }
+  }, [handleSendMessage]);
 
   const handleCreateRoom = useCallback(async (e) => {
     e.preventDefault();
@@ -551,6 +659,28 @@ const Chat = () => {
     setContextMenu(null);
   }, []);
 
+  // Calculate emoji picker position
+  const calculateEmojiPickerPosition = useCallback(() => {
+    if (emojiButtonRef.current) {
+      const rect = emojiButtonRef.current.getBoundingClientRect();
+      setEmojiPickerPosition({
+        top: rect.top,
+        left: rect.left,
+        bottom: rect.bottom,
+      });
+    }
+  }, []);
+
+  // Handle emoji button click
+  const handleEmojiButtonClick = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!showEmoji) {
+      calculateEmojiPickerPosition();
+    }
+    setShowEmoji(prev => !prev);
+  }, [showEmoji, calculateEmojiPickerPosition]);
+
   useEffect(() => {
     if (!activeRoom || messages.length === 0) return;
     
@@ -565,6 +695,8 @@ const Chat = () => {
       setShowMembers(false);
       setContextMenu(null);
       setEditingMessage(null);
+      setImagePreview(null);
+      setShowEmoji(false);
     }
   }, [activeRoom]);
 
@@ -573,7 +705,7 @@ const Chat = () => {
       inputRef.current.style.height = 'auto';
       inputRef.current.style.height = `${Math.min(inputRef.current.scrollHeight, 120)}px`;
     }
-  }, [messageBody]);
+  }, [msgBody]);
 
   useEffect(() => {
     return () => {
@@ -798,6 +930,7 @@ const Chat = () => {
                         editBody={editingMessage?.body || ""}
                         setEditBody={(body) => setEditingMessage(prev => prev ? { ...prev, body } : null)}
                         onContextMenu={handleContextMenu}
+                        onImageClick={setFullscreenImage}
                       />
                     </div>
                   );
@@ -837,50 +970,125 @@ const Chat = () => {
               </div>
             </div>
 
-            <div className="px-4 md:px-5 py-3 border-t border-border flex-shrink-0">
+            {/* ── Message Input with Emoji & Image Support ─────────────────── */}
+            <div className="px-4 md:px-5 py-3 md:py-4 border-t border-border
+                            flex-shrink-0 pb-safe">
+
+              {/* Image preview */}
+              {imagePreview && (
+                <div className="mb-3 relative inline-block">
+                  <img
+                    src={imagePreview.base64}
+                    alt="Preview"
+                    className="h-24 w-auto rounded-lg object-cover border border-border"
+                  />
+                  <button
+                    onClick={handleCancelImage}
+                    className="absolute -top-2 -right-2 w-5 h-5 bg-pink rounded-full
+                               text-white text-xs flex items-center justify-center
+                               cursor-pointer hover:bg-pink/80 transition-colors"
+                  >
+                    ×
+                  </button>
+                  <p className="text-muted text-[10px] mt-1 truncate max-w-[200px]">
+                    {imagePreview.name}
+                  </p>
+                </div>
+              )}
+
               <form onSubmit={handleSendMessage} className="flex gap-2 items-end">
+                {/* Emoji button */}
+                <div className="relative flex-shrink-0">
+                  <button
+                    ref={emojiButtonRef}
+                    type="button"
+                    onClick={handleEmojiButtonClick}
+                    className={`flex items-center justify-center w-9 h-9 rounded-lg
+                                border transition-colors cursor-pointer
+                                ${showEmoji
+                                  ? "border-blue bg-blue/10 text-blue"
+                                  : "border-border hover:bg-border/50 text-muted"}`}
+                    title="Emoji"
+                  >
+                    😊
+                  </button>
+
+                  {/* Emoji picker dropdown */}
+                  {showEmoji && (
+                    <div 
+                      className="fixed z-[9999]"
+                      style={{
+                        position: 'fixed',
+                        bottom: `calc(100vh - ${emojiPickerPosition.top}px + 10px)`,
+                        left: `${emojiPickerPosition.left - 20}px`,
+                      }}
+                    >
+                      <EmojiPickerComponent
+                        onSelect={(emoji) => {
+                          setMsgBody(prev => prev + emoji);
+                          setShowEmoji(false);
+                          inputRef.current?.focus();
+                        }}
+                        onClose={() => setShowEmoji(false)}
+                      />
+                    </div>
+                  )}
+                </div>
+
+                {/* Image upload */}
+                <ImageUpload
+                  onUpload={handleImageUpload}
+                  disabled={sending}
+                />
+
+                {/* Text input */}
                 <textarea
                   ref={inputRef}
-                  value={messageBody}
-                  onChange={handleMessageInput}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) {
-                      e.preventDefault();
-                      handleSendMessage(e);
-                    }
-                  }}
-                  onBlur={() => activeRoom && handleTyping(activeRoom._id, false)}
-                  placeholder={`Message # ${activeRoom.name}`}
-                  maxLength={MESSAGE_MAX_LENGTH}
+                  value={msgBody}
+                  onChange={handleMsgInput}
+                  onKeyDown={handleKeyDown}
+                  onBlur={() => activeRoom && stopTyping(activeRoom._id)}
+                  placeholder={imagePreview
+                    ? "Add a caption... (optional)"
+                    : `Message # ${activeRoom.name}`}
                   rows={1}
+                  disabled={!!imagePreview}
                   className="flex-1 bg-input border border-border/80 rounded-xl
                              px-4 py-2.5 text-white text-sm placeholder-muted
-                             focus:border-blue focus:outline-none resize-none"
-                  style={{ overflow: 'hidden' }}
+                             focus:border-blue focus:outline-none
+                             resize-none leading-relaxed font-sans
+                             disabled:opacity-50"
                 />
+
+                {/* Send button */}
                 <button
                   type="submit"
-                  disabled={isSending || !messageBody.trim() || messageBody.length > MESSAGE_MAX_LENGTH}
+                  disabled={sending || (!msgBody.trim() && !imagePreview)
+                            || msgBody.length > MESSAGE_MAX_LENGTH}
                   className="bg-blue hover:bg-blue/90 disabled:opacity-50
-                             text-white font-bold px-4 md:px-5 py-2.5 rounded-xl
-                             text-sm transition-colors flex-shrink-0 cursor-pointer"
+                             text-white font-bold px-4 md:px-5 py-2.5
+                             rounded-xl text-sm transition-colors
+                             cursor-pointer flex-shrink-0"
                 >
                   <span className="hidden sm:inline">Send</span>
-                  <svg className="sm:hidden w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-                  </svg>
+                  <span className="sm:hidden">
+                    <svg width="16" height="16" viewBox="0 0 24 24"
+                      fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <line x1="22" y1="2" x2="11" y2="13"/>
+                      <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                    </svg>
+                  </span>
                 </button>
               </form>
-              
+
               <div className="flex justify-between items-center mt-1.5">
                 <p className="text-muted text-[10px] hidden sm:block">
                   Enter to send · Shift+Enter for new line
                 </p>
-                {messageBody.length > MESSAGE_MAX_LENGTH - 200 && (
-                  <p className={`text-[10px] ml-auto ${
-                    messageBody.length > MESSAGE_MAX_LENGTH ? "text-pink" : "text-amber"
-                  }`}>
-                    {messageBody.length}/{MESSAGE_MAX_LENGTH}
+                {msgBody.length > 1800 && (
+                  <p className={`text-[10px] ml-auto
+                                 ${msgBody.length > MESSAGE_MAX_LENGTH ? "text-pink" : "text-amber"}`}>
+                    {msgBody.length}/{MESSAGE_MAX_LENGTH}
                   </p>
                 )}
               </div>
@@ -906,6 +1114,14 @@ const Chat = () => {
           </div>
         )}
       </div>
+
+      {/* ── Fullscreen Image Modal ──────────────────────────── */}
+      {fullscreenImage && (
+        <ImageModal
+          src={fullscreenImage}
+          onClose={() => setFullscreenImage(null)}
+        />
+      )}
     </div>
   );
 };

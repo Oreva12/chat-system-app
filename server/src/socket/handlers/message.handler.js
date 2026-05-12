@@ -16,7 +16,7 @@ setInterval(() => {
 const registerMessageHandlers = (io, socket) => {
 
   // ── message:send ─────────────────────────────────────────────
-  socket.on("message:send", async ({ roomId, body, type = "text" }, callback) => {
+  socket.on("message:send", async ({ roomId, body, type = "text", imageData }, callback) => {
     try {
       // Rate limit
       const userId   = socket.user._id.toString();
@@ -28,13 +28,9 @@ const registerMessageHandlers = (io, socket) => {
       }
       lastMessageTime.set(userId, now);
 
-      // Validate
-      if (!roomId || !body?.trim()) {
-        return callback({ success: false, message: "roomId and body are required" });
-      }
-
-      if (body.trim().length > 2000) {
-        return callback({ success: false, message: "Message too long (max 2000 chars)" });
+      // Validate room
+      if (!roomId) {
+        return callback({ success: false, message: "roomId is required" });
       }
 
       const room = await Room.findById(roomId);
@@ -42,18 +38,59 @@ const registerMessageHandlers = (io, socket) => {
         return callback({ success: false, message: "Room not found" });
       }
 
-      const sanitisedBody = body.trim().replace(/<[^>]*>/g, "");
+      let messageBody = "";
+      let messageType = type;
+      let messageThumbnail = null;
 
-      // Create message — sender counts as delivered + read
-      const message = await Message.create({
+      // Handle image messages
+      if (type === "image" && imageData) {
+        // Validate base64 image format
+        if (!imageData.startsWith("data:image/")) {
+          return callback({ success: false, message: "Invalid image format" });
+        }
+
+        // Check size — base64 is ~33% larger than raw bytes
+        const sizeInBytes = (imageData.length * 3) / 4;
+        if (sizeInBytes > 5 * 1024 * 1024) { // 5MB limit
+          return callback({ success: false, message: "Image too large (max 5MB)" });
+        }
+
+        messageBody = imageData;
+        messageType = "image";
+
+        // Optional: Generate thumbnail for gallery view
+        // messageThumbnail = await generateThumbnail(imageData);
+
+      } 
+      // Handle text messages
+      else if (body?.trim()) {
+        // Only text messages have the 2000 char limit
+        if (body.trim().length > 2000) {
+          return callback({ success: false, message: "Message too long (max 2000 chars)" });
+        }
+        messageBody = body.trim().replace(/<[^>]*>/g, "");
+        messageType = "text";
+      }
+      else {
+        return callback({ success: false, message: "Message body or image is required" });
+      }
+
+      // Create message
+      const messageData = {
         roomId,
         sender:      socket.user._id,
-        body:        sanitisedBody,
-        type,
+        body:        messageBody,
+        type:        messageType,
         readBy:      [socket.user._id],
         deliveredTo: [socket.user._id],
-      });
+      };
 
+      // Add thumbnail if generated
+      if (messageThumbnail) {
+        messageData.thumbnail = messageThumbnail;
+      }
+
+      const message = await Message.create(messageData);
       const populated = await message.populate("sender", "username avatarUrl");
 
       // Broadcast to room
@@ -61,25 +98,30 @@ const registerMessageHandlers = (io, socket) => {
 
       // Mark as delivered for all currently connected room members
       const roomSockets = await io.in(roomId).fetchSockets();
+      const deliveryPromises = [];
+
       for (const s of roomSockets) {
         if (s.user && s.user._id.toString() !== socket.user._id.toString()) {
-          // Mark delivered for this connected user
-          await Message.findByIdAndUpdate(
-            message._id,
-            { $addToSet: { deliveredTo: s.user._id } },
-            { returnDocument: "after" }
+          deliveryPromises.push(
+            Message.findByIdAndUpdate(
+              message._id,
+              { $addToSet: { deliveredTo: s.user._id } },
+              { returnDocument: "after" }
+            ).then(updatedMessage => {
+              // Notify sender of delivery for each recipient
+              socket.emit("message:status_update", {
+                messageId:   message._id,
+                deliveredTo: updatedMessage.deliveredTo,
+                readBy:      updatedMessage.readBy,
+              });
+            })
           );
-
-          // Notify sender of delivery
-          socket.emit("message:status_update", {
-            messageId:   message._id,
-            deliveredTo: message.deliveredTo,
-            readBy:      message.readBy,
-          });
         }
       }
 
-      console.log(`Message in ${room.name} from ${socket.user.username}: ${sanitisedBody.substring(0, 30)}`);
+      await Promise.all(deliveryPromises);
+
+      console.log(`📨 ${messageType.toUpperCase()} in ${room.name} from ${socket.user.username}`);
       callback({ success: true, message: populated });
 
     } catch (err) {
@@ -216,7 +258,7 @@ const registerMessageHandlers = (io, socket) => {
 
       io.to(message.roomId.toString()).emit("message:updated", populated);
 
-      console.log(`Message edited by ${socket.user.username}`);
+      console.log(`✏️ Message edited by ${socket.user.username}`);
       callback({ success: true, message: populated });
 
     } catch (err) {
@@ -244,22 +286,85 @@ const registerMessageHandlers = (io, socket) => {
 
       // Soft delete
       message.isDeleted = true;
-      message.body      = "This message was deleted";
+      message.body      = message.type === "image" ? "🗑️ Image deleted" : "This message was deleted";
       await message.save();
 
       io.to(message.roomId.toString()).emit("message:updated", {
         _id:       message._id,
         roomId:    message.roomId,
         isDeleted: true,
-        body:      "This message was deleted",
+        body:      message.body,
+        type:      message.type,
       });
 
-      console.log(`Message deleted by ${socket.user.username}`);
+      console.log(`🗑️ Message deleted by ${socket.user.username}`);
       callback({ success: true });
 
     } catch (err) {
       console.error("message:delete error:", err);
       callback({ success: false, message: "Failed to delete message" });
+    }
+  });
+
+  // ── message:share_image ──────────────────────────────────────
+  socket.on("message:share_image", async ({ roomId, imageData, caption }, callback) => {
+    try {
+      // Rate limit
+      const userId   = socket.user._id.toString();
+      const lastTime = lastMessageTime.get(userId) || 0;
+      const now      = Date.now();
+
+      if (now - lastTime < MESSAGE_COOLDOWN) {
+        return callback({ success: false, message: "Slow down — sending too fast" });
+      }
+      lastMessageTime.set(userId, now);
+
+      const room = await Room.findById(roomId);
+      if (!room) {
+        return callback({ success: false, message: "Room not found" });
+      }
+
+      // Validate image
+      if (!imageData || !imageData.startsWith("data:image/")) {
+        return callback({ success: false, message: "Valid image is required" });
+      }
+
+      // Check size
+      const sizeInBytes = (imageData.length * 3) / 4;
+      if (sizeInBytes > 5 * 1024 * 1024) {
+        return callback({ success: false, message: "Image too large (max 5MB)" });
+      }
+
+      // Create message with optional caption
+      let messageBody = imageData;
+      let messageType = "image";
+
+      if (caption?.trim()) {
+        messageBody = JSON.stringify({
+          image: imageData,
+          caption: caption.trim().substring(0, 200)
+        });
+        messageType = "image_with_caption";
+      }
+
+      const message = await Message.create({
+        roomId,
+        sender:      socket.user._id,
+        body:        messageBody,
+        type:        messageType,
+        readBy:      [socket.user._id],
+        deliveredTo: [socket.user._id],
+      });
+
+      const populated = await message.populate("sender", "username avatarUrl");
+      io.to(roomId).emit("message:new", populated);
+
+      console.log(`🖼️ Image shared in ${room.name} by ${socket.user.username}`);
+      callback({ success: true, message: populated });
+
+    } catch (err) {
+      console.error("message:share_image error:", err);
+      callback({ success: false, message: "Failed to share image" });
     }
   });
 

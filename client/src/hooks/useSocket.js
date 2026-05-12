@@ -145,8 +145,6 @@ const useSocket = () => {
       );
     });
 
-    
-
     // Typing events 
     socket.on("typing:update", ({ roomId, user, isTyping }) => {
       setTypingUsers((prev) => {
@@ -255,13 +253,43 @@ const useSocket = () => {
     });
   }, [setActiveRoomBoth]);
 
-  // Message actions
-  const sendMessage = useCallback((roomId, body) => {
+  // ── Message actions with image support ──────────────────────────
+  const sendMessage = useCallback((roomId, body, type = "text", imageData = null) => {
     return new Promise((resolve, reject) => {
       if (!socketRef.current) return reject("Not connected");
-      socketRef.current.emit("message:send", { roomId, body }, (res) => {
+      
+      const payload = { roomId, type };
+      
+      if (type === "image" && imageData) {
+        payload.imageData = imageData;
+        if (body?.trim()) {
+          payload.body = body.trim(); // Optional caption for image
+        }
+      } else {
+        if (!body?.trim()) return reject("Message body is required");
+        payload.body = body.trim();
+      }
+      
+      socketRef.current.emit("message:send", payload, (res) => {
         if (res && res.success) resolve(res.message);
         else reject(res?.message || "Failed to send message");
+      });
+    });
+  }, []);
+
+  // ── Dedicated image sharing method ──────────────────────────────
+  const shareImage = useCallback((roomId, imageData, caption = "") => {
+    return new Promise((resolve, reject) => {
+      if (!socketRef.current) return reject("Not connected");
+      if (!imageData) return reject("Image data is required");
+      
+      socketRef.current.emit("message:share_image", { 
+        roomId, 
+        imageData, 
+        caption: caption.trim() 
+      }, (res) => {
+        if (res && res.success) resolve(res.message);
+        else reject(res?.message || "Failed to share image");
       });
     });
   }, []);
@@ -290,22 +318,22 @@ const useSocket = () => {
   }, []);
 
   const editMessage = useCallback((messageId, body) => {
-      return new Promise((resolve, reject) => {
-        if (!socketRef.current) return reject("Not connected");
+    return new Promise((resolve, reject) => {
+      if (!socketRef.current) return reject("Not connected");
 
-        socketRef.current.emit(
-          "message:edit",
-          { messageId, body },
-          (res) => {
-            if (res && res.success) {
-              resolve(res);
-            } else {
-              reject(res?.message || "Failed to edit message");
-            }
+      socketRef.current.emit(
+        "message:edit",
+        { messageId, body },
+        (res) => {
+          if (res && res.success) {
+            resolve(res);
+          } else {
+            reject(res?.message || "Failed to edit message");
           }
-        );
-      });
-    }, []);
+        }
+      );
+    });
+  }, []);
 
   const deleteMessage = useCallback((messageId) => {
     return new Promise((resolve, reject) => {
@@ -357,6 +385,7 @@ const useSocket = () => {
     joinRoom,
     leaveRoom,
     sendMessage,
+    shareImage,      // New: dedicated image sharing
     loadMoreMessages,
     markRead,
     editMessage,
