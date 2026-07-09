@@ -3,38 +3,46 @@ const mongoose = require("mongoose");
 const roomSchema = new mongoose.Schema(
   {
     name: {
-      type: String,
-      required: [true, "Room name is required"],
-      unique: true,
-      trim: true,
-      minlength: [3, "Room name must be at least 3 characters"],
-      maxlength: [50, "Room name cannot exceed 50 characters"],
+      type:      String,
+      unique:    true,
+      trim:      true,
+      maxlength: [100, "Room name cannot exceed 50 characters"],
     },
     description: {
-      type: String,
-      default: "",
+      type:      String,
+      default:   "",
       maxlength: [200, "Description cannot exceed 200 characters"],
     },
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-      required: true,
+      ref:  "User",
     },
     members: [
-      {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "User",
-      },
+      { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     ],
-    isPrivate: {
-      type: Boolean,
-      default: false,
+    admins: [
+      { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    ],
+    pendingMembers: [
+      { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    ],
+    invitedMembers: [
+      { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    ],
+
+    // Room type
+    type: {
+      type:    String,
+      enum:    ["public", "private", "invite", "direct"],
+      default: "public",
     },
+
+    // Legacy flags kept for compatibility
+    isPrivate: { type: Boolean, default: false },
+    isDirect:  { type: Boolean, default: false },
   },
   { timestamps: true }
 );
 
-// Index for fast lookup by name
-//roomSchema.index({ name: 1 });
 
 module.exports = mongoose.model("Room", roomSchema);

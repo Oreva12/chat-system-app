@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { io } from "socket.io-client";
 import useAuth from "./useAuth";
+import { announce } from "../components/LiveAnnouncer";
 
 const SOCKET_URL = import.meta.env.VITE_API_URL?.replace("/api", "")
   || "http://localhost:5000";
@@ -19,6 +20,9 @@ const useSocket = () => {
   const [loadingMsgs, setLoadingMsgs] = useState(false);
   const [typingUsers, setTypingUsers] = useState({});
   const [members,     setMembers]     = useState([]);
+  const [users,      setUsers]      = useState([]);
+  const [showDMList, setShowDMList] = useState(false);
+  const [notifications, setNotifications] = useState([]);
 
   // Keep ref in sync with state for reconnect access
   const setActiveRoomBoth = useCallback((room) => {
@@ -101,7 +105,34 @@ const useSocket = () => {
       setRooms((prev) => [room, ...prev]);
     });
 
+    // Room deleted event
+    socket.on("room:deleted", ({ roomId, roomName, message }) => {
+      // Remove room from rooms list
+      setRooms(prev => prev.filter(r => r._id !== roomId));
+      
+      // If current active room was deleted, clear it
+      if (activeRoomRef.current?._id === roomId) {
+        setActiveRoomBoth(null);
+        setMessages([]);
+        setMembers([]);
+      }
+      
+      console.log(message);
+    });
+
+    // Room list refresh event
+    socket.on("room:list_refresh", ({ deletedRoomId }) => {
+      // Refresh room list from server
+      if (socketRef.current) {
+        socketRef.current.emit("room:list", {}, (res) => {
+          if (res && res.success) setRooms(res.rooms || []);
+        });
+      }
+    });
+
+    // User joined room
     socket.on("room:user_joined", ({ roomId, user }) => {
+      announce(`${user.username} joined the room`);
       setMembers((prev) => {
         const exists = prev.find((m) => m._id === user._id);
         if (exists) {
@@ -113,7 +144,9 @@ const useSocket = () => {
       });
     });
 
+    // User left room
     socket.on("room:user_left", ({ roomId, user }) => {
+      announce(`${user.username} left the room`);
       setMembers((prev) =>
         prev.map((m) =>
           m._id === user._id ? { ...m, isOnline: false } : m
@@ -125,7 +158,12 @@ const useSocket = () => {
     socket.on("message:new", (message) => {
       setMessages((prev) => {
         const exists = prev.find((m) => m._id === message._id);
-        return exists ? prev : [...prev, message];
+        if (exists) return prev;
+        // Announce new message to screen readers
+        const sender = message.sender?.username || "Someone";
+        announce(`New message from ${sender}`);
+        socket.emit("message:delivered", { messageId: message._id });
+        return [...prev, message];
       });
     });
 
@@ -162,6 +200,62 @@ const useSocket = () => {
       });
     });
 
+    // New DM initiated by someone else
+    socket.on("dm:new", ({ room, from }) => {
+      setRooms((prev) => {
+        const exists = prev.find((r) => r._id === room._id);
+        return exists ? prev : [room, ...prev];
+      });
+    });
+
+    // Admin: someone requested to join your room
+    socket.on("room:join_requested", ({ roomId, roomName, user }) => {
+      setNotifications((prev) => [...prev, {
+        id:       Date.now(),
+        type:     "join_request",
+        roomId,
+        roomName,
+        user,
+      }]);
+    });
+
+    // User: your request was approved
+    socket.on("room:request_approved", ({ roomId, roomName, room }) => {
+      announce(`Your request to join ${roomName} was approved`, "assertive");
+      setNotifications((prev) => [...prev, {
+        id:       Date.now(),
+        type:     "request_approved",
+        roomId,
+        roomName,
+      }]);
+      // Auto join the room
+      setRooms((prev) => {
+        const exists = prev.find((r) => r._id === room._id);
+        return exists ? prev : [...prev, room];
+      });
+    });
+
+    // User: your request was rejected
+    socket.on("room:request_rejected", ({ roomId, roomName }) => {
+      setNotifications((prev) => [...prev, {
+        id:       Date.now(),
+        type:     "request_rejected",
+        roomName,
+      }]);
+    });
+
+    // User: you received an invite
+    socket.on("room:invited", ({ roomId, roomName, room, invitedBy }) => {
+      setNotifications((prev) => [...prev, {
+        id:       Date.now(),
+        type:     "invite",
+        roomId,
+        roomName,
+        invitedBy,
+        room,
+      }]);
+    });
+
     // Connection errors 
     socket.on("connect_error", (err) => {
       setError(err.message);
@@ -179,10 +273,10 @@ const useSocket = () => {
   }, [token]);
 
   // Room actions 
-  const createRoom = useCallback((name, description = "") => {
+  const createRoom = useCallback((name, description = "", type = "public") => {
     return new Promise((resolve, reject) => {
       if (!socketRef.current) return reject("Not connected");
-      socketRef.current.emit("room:create", { name, description }, (res) => {
+      socketRef.current.emit("room:create", { name, description, type }, (res) => {
         if (res && res.success) {
           setActiveRoomBoth(res.room);
           setMessages([]);
@@ -194,6 +288,20 @@ const useSocket = () => {
       });
     });
   }, [setActiveRoomBoth]);
+
+  // Delete room (admin only)
+  const deleteRoom = useCallback((roomId) => {
+    return new Promise((resolve, reject) => {
+      if (!socketRef.current) return reject("Not connected");
+      socketRef.current.emit("room:delete", { roomId }, (res) => {
+        if (res && res.success) {
+          resolve(res);
+        } else {
+          reject(res?.message || "Failed to delete room");
+        }
+      });
+    });
+  }, []);
 
   const joinRoom = useCallback((roomId) => {
     return new Promise((resolve, reject) => {
@@ -252,6 +360,58 @@ const useSocket = () => {
       });
     });
   }, [setActiveRoomBoth]);
+
+  // Permission actions
+  const requestJoin = useCallback((roomId) => {
+    return new Promise((resolve, reject) => {
+      if (!socketRef.current) return reject("Not connected");
+      socketRef.current.emit("room:request_join", { roomId }, (res) => {
+        if (res && res.success) resolve();
+        else reject(res?.message || "Failed to request join");
+      });
+    });
+  }, []);
+
+  const approveMember = useCallback((roomId, userId) => {
+    return new Promise((resolve, reject) => {
+      if (!socketRef.current) return reject("Not connected");
+      socketRef.current.emit("room:approve_member", { roomId, userId }, (res) => {
+        if (res && res.success) resolve();
+        else reject(res?.message || "Failed to approve");
+      });
+    });
+  }, []);
+
+  const rejectMember = useCallback((roomId, userId) => {
+    return new Promise((resolve, reject) => {
+      if (!socketRef.current) return reject("Not connected");
+      socketRef.current.emit("room:reject_member", { roomId, userId }, (res) => {
+        if (res && res.success) resolve();
+        else reject(res?.message || "Failed to reject");
+      });
+    });
+  }, []);
+
+  const acceptInvite = useCallback((roomId) => {
+    return new Promise((resolve, reject) => {
+      if (!socketRef.current) return reject("Not connected");
+      socketRef.current.emit("room:accept_invite", { roomId }, (res) => {
+        if (res && res.success) {
+          setRooms((prev) => {
+            const exists = prev.find((r) => r._id === res.room._id);
+            return exists ? prev : [...prev, res.room];
+          });
+          resolve(res.room);
+        } else {
+          reject(res?.message || "Failed to accept invite");
+        }
+      });
+    });
+  }, []);
+
+  const dismissNotification = useCallback((id) => {
+    setNotifications((prev) => prev.filter((n) => n.id !== id));
+  }, []);
 
   // ── Message actions with image support ──────────────────────────
   const sendMessage = useCallback((roomId, body, type = "text", imageData = null) => {
@@ -369,6 +529,56 @@ const useSocket = () => {
     socketRef.current.emit("typing:stop", { roomId });
   }, []);
 
+  // ── User actions ──────────────────────────────────────────────
+  const fetchUsers = useCallback(() => {
+    return new Promise((resolve, reject) => {
+      if (!socketRef.current) return reject("Not connected");
+      socketRef.current.emit("user:list", {}, (res) => {
+        if (res && res.success) {
+          setUsers(res.users || []);
+          resolve(res.users);
+        } else {
+          reject(res?.message || "Failed to fetch users");
+        }
+      });
+    });
+  }, []);
+
+  const startDM = useCallback((targetUserId) => {
+    return new Promise((resolve, reject) => {
+      if (!socketRef.current) return reject("Not connected");
+      socketRef.current.emit("dm:start", { targetUserId }, (res) => {
+        if (res && res.success) {
+          // Add DM to rooms list
+          setRooms((prev) => {
+            const exists = prev.find((r) => r._id === res.room._id);
+            return exists ? prev : [res.room, ...prev];
+          });
+          setActiveRoomBoth(res.room);
+          setMessages([]);
+          setMembers([res.targetUser, {
+            _id:      socketRef.current?.id,
+            username: "You",
+            isOnline: true,
+          }]);
+
+          // Load message history
+          socketRef.current.emit("message:history",
+            { roomId: res.room._id }, (histRes) => {
+              if (histRes && histRes.success) {
+                setMessages(histRes.messages || []);
+                setHasMore(histRes.hasMore || false);
+              }
+            });
+
+          resolve(res.room);
+        } else {
+          reject(res?.message || "Failed to start DM");
+        }
+      });
+    });
+  }, [setActiveRoomBoth]);
+
   return {
     socket:          socketRef.current,
     connected,
@@ -382,16 +592,28 @@ const useSocket = () => {
     typingUsers,
     members,
     createRoom,
+    deleteRoom,      // ← Added deleteRoom
     joinRoom,
     leaveRoom,
     sendMessage,
-    shareImage,      // New: dedicated image sharing
+    shareImage,   
     loadMoreMessages,
     markRead,
     editMessage,
     deleteMessage,
     startTyping,
     stopTyping,
+    users,
+    fetchUsers,
+    startDM,
+    showDMList,
+    setShowDMList,
+    notifications,
+    requestJoin,
+    approveMember,
+    rejectMember,
+    acceptInvite,
+    dismissNotification,
   }; 
 };
 

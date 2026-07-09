@@ -3,8 +3,8 @@ require("dotenv").config({ path: require("path").resolve(__dirname, "../.env") }
 const mongoose = require("mongoose");
 
 beforeAll(async () => {
-  const uri = process.env.MONGO_TEST_URI;
-  if (!uri) throw new Error("MONGO_TEST_URI not set in .env");
+  const uri = process.env.MONGO_URI;
+  if (!uri) throw new Error("MONGO_URI not set in .env");
   await mongoose.connect(uri);
   console.log("✅ Connected to Atlas test database");
 

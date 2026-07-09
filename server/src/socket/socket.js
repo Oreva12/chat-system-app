@@ -4,11 +4,22 @@ const User                    = require("../models/user.model");
 const registerRoomHandlers    = require("./handlers/room.handler");
 const registerMessageHandlers = require("./handlers/message.handler");
 const registerTypingHandlers  = require("./handlers/typing.handler");
+const registerUserHandlers    = require("./handlers/user.handler");
+const registerPermissionHandlers = require("./handlers/permission.handler");
 
 const initSocket = (server) => {
   const io = new Server(server, {
     cors: {
-      origin:      process.env.CLIENT_URL || "http://localhost:5173",
+      origin: (origin, callback) => {
+        const allowedOrigins = [
+          process.env.CLIENT_URL,
+          "http://localhost:5173",
+        ].filter(Boolean);
+        if (!origin || allowedOrigins.includes(origin)) {
+          return callback(null, true);
+        }
+        callback(new Error("Not allowed by CORS"));
+      },
       credentials: true,
     },
   });
@@ -45,6 +56,8 @@ const initSocket = (server) => {
     registerRoomHandlers(io, socket);
     registerMessageHandlers(io, socket);
     registerTypingHandlers(io, socket);
+    registerUserHandlers(io, socket);
+    registerPermissionHandlers(io, socket);
 
     socket.on("disconnect", async (reason) => {
       console.log(`❌ Disconnected: ${socket.user.username} — ${reason}`);
